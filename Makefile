@@ -24,4 +24,5 @@ clean:
 	rm -f *.o ft8/*.o common/*.o fft/*.o $(TARGETS)
 install:
 	$(AR) rc libft8.a ft8/constants.o ft8/encode.o ft8/pack.o ft8/text.o common/wave.o
-	install libft8.a /usr/lib/libft8.a
+#	install libft8.a /usr/local/lib/libft8.a
+	install decode_ft8 /usr/local/bin
