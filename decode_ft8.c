@@ -9,6 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <locale.h>
+#include <libgen.h>
 
 
 #include "ft8/unpack.h"
@@ -415,11 +416,19 @@ int main(int argc, char** argv)
 #if 1
 	    // Hacked by KA9Q to emit time prefix and actual frequency
 	    {
-	      fprintf(stdout,"%3d %+4.2f %'.3lf ~ %s\n",
-		     cand->score,
-		     time_sec,
-		     1e6 * base_freq + freq_hz,
-		     message.text);
+	      char *path = strdup(wav_path);
+	      char const *bn = basename(path);
+	      int year,mon,day,hr,minute,sec;
+	      sscanf(bn,"%02d%02d%02d_%02d%02d%02d",&year,&mon,&day,&hr,&minute,&sec);
+	      year += 2000; // kludge
+	      free(path);
+
+	      fprintf(stdout,"%4d/%02d/%02d %02d:%02d%02d %3d %+4.2f %'.3lf ~ %s\n",
+		      year,mon,day,hr,minute,sec,
+		      cand->score,
+		      time_sec,
+		      1e6 * base_freq + freq_hz,
+		      message.text);
 	    }
 #else
             // Fake WSJT-X-like output for now
