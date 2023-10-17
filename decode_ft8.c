@@ -423,7 +423,7 @@ int main(int argc, char** argv)
 	      year += 2000; // kludge
 	      free(path);
 
-	      fprintf(stdout,"%4d/%02d/%02d %02d:%02d%02d %3d %+4.2f %'.3lf ~ %s\n",
+	      fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.3lf ~ %s\n",
 		      year,mon,day,hr,minute,sec,
 		      cand->score,
 		      time_sec,
