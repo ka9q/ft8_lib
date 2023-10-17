@@ -263,6 +263,7 @@ int main(int argc, char** argv)
       fprintf(stderr,"Can't read %s\n",wav_path);
       exit(1);
     }
+    fprintf(stdout,"%s\n",wav_path);
 
 #else
     // Parse arguments one by one
@@ -416,20 +417,7 @@ int main(int argc, char** argv)
 #if 1
 	    // Hacked by KA9Q to emit time prefix and actual frequency
 	    {
-	      struct timeval clocktime;
-	      gettimeofday(&clocktime,NULL);
-	      // Round to nearest 15 seconds, subtract 15 to get beginning of slot
-
-	      struct tm result;
-	      gmtime_r(&clocktime.tv_sec,&result);
-	      printf("%04d-%02d-%02dT%02d:%02d:%02d.%06d %3d %+4.2f %'.3lf ~ %s\n",
-		     result.tm_year+1900,
-		     result.tm_mon+1,
-		     result.tm_mday,
-		     result.tm_hour,
-		     result.tm_min,
-		     result.tm_sec,
-		     clocktime.tv_usec,
+	      printf("%3d %+4.2f %'.3lf ~ %s\n",
 		     cand->score,
 		     time_sec,
 		     1e6 * base_freq + freq_hz,
