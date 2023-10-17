@@ -263,7 +263,7 @@ int main(int argc, char** argv)
       fprintf(stderr,"Can't read %s\n",wav_path);
       exit(1);
     }
-    fprintf(stdout,"%s\n",wav_path);
+    fprintf(stdout,"%s:\n",wav_path);
 
 #else
     // Parse arguments one by one
@@ -417,7 +417,7 @@ int main(int argc, char** argv)
 #if 1
 	    // Hacked by KA9Q to emit time prefix and actual frequency
 	    {
-	      printf("%3d %+4.2f %'.3lf ~ %s\n",
+	      fprintf(stdout,"%3d %+4.2f %'.3lf ~ %s\n",
 		     cand->score,
 		     time_sec,
 		     1e6 * base_freq + freq_hz,
