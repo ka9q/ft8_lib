@@ -1,8 +1,15 @@
+// unknown origin; hacked by Phil Karn, KA9Q Oct 2023
+#define _GNU_SOURCE 1
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdbool.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+#include <locale.h>
+
 
 #include "ft8/unpack.h"
 #include "ft8/ldpc.h"
@@ -16,7 +23,7 @@
 #include "common/debug.h"
 #include "fft/kiss_fftr.h"
 
-#define LOG_LEVEL LOG_INFO
+#define LOG_LEVEL LOG_WARN
 
 const int kMin_score = 10; // Minimum sync score threshold for candidates
 const int kMax_candidates = 120;
@@ -29,7 +36,7 @@ const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
 
 void usage()
 {
-    fprintf(stderr, "Decode a 15-second (or slighly shorter) WAV file.\n");
+  fprintf(stderr, "decode_ft8 [-4] [-f basefreq] file\n");
 }
 
 static float hann_i(int i, int N)
@@ -229,6 +236,35 @@ int main(int argc, char** argv)
     const char* wav_path = NULL;
     bool is_ft8 = true;
 
+#if 1
+    // Version by KA9Q to allow base frequency
+    float base_freq = 0;
+    int c;
+    while((c = getopt(argc,argv,"4f:")) != -1){
+      switch(c){
+      case '4':
+	is_ft8 = false;
+	break;
+      case 'f':
+	base_freq = strtod(optarg,NULL); // Base freq in MHz
+	break;
+      }
+    }
+    {
+      char *loc = getenv("$LANG");
+      setlocale(LC_ALL,loc); // To get commas in long numerical strings
+    }    
+    if(argc <= optind){
+      usage();
+      exit(1);
+    }
+    wav_path = argv[optind];
+    if(access(wav_path,R_OK) == -1){
+      fprintf(stderr,"Can't read %s\n",wav_path);
+      exit(1);
+    }
+
+#else
     // Parse arguments one by one
     int arg_idx = 1;
     while (arg_idx < argc)
@@ -261,6 +297,7 @@ int main(int argc, char** argv)
         }
         ++arg_idx;
     }
+#endif
     // Check if all mandatory arguments have been received
     if (wav_path == NULL)
     {
@@ -376,9 +413,33 @@ int main(int argc, char** argv)
             decoded_hashtable[idx_hash] = &decoded[idx_hash];
             ++num_decoded;
 
+#if 1
+	    // Hacked by KA9Q to emit time prefix and actual frequency
+	    {
+	      struct timeval clocktime;
+	      gettimeofday(&clocktime,NULL);
+	      // Round to nearest 15 seconds, subtract 15 to get beginning of slot
+
+	      struct tm result;
+	      gmtime_r(&clocktime.tv_sec,&result);
+	      printf("%04d-%02d-%02dT%02d:%02d:%02d.%06d %3d %+4.2f %'.3lf ~ %s\n",
+		     result.tm_year+1900,
+		     result.tm_mon+1,
+		     result.tm_mday,
+		     result.tm_hour,
+		     result.tm_min,
+		     result.tm_sec,
+		     clocktime.tv_usec,
+		     cand->score,
+		     time_sec,
+		     1e6 * base_freq + freq_hz,
+		     message.text);
+	    }
+#else
             // Fake WSJT-X-like output for now
             int snr = 0; // TODO: compute SNR
             printf("000000 %3d %+4.2f %4.0f ~  %s\n", cand->score, time_sec, freq_hz, message.text);
+#endif
         }
     }
     LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
