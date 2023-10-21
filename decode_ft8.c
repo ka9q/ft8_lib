@@ -252,7 +252,7 @@ int main(int argc, char** argv)
       }
     }
     {
-      char *loc = getenv("$LANG");
+      char *loc = getenv("LANG");
       setlocale(LC_ALL,loc); // To get commas in long numerical strings
     }    
     if(argc <= optind){
