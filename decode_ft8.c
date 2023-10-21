@@ -239,7 +239,7 @@ int main(int argc, char** argv)
 
 #if 1
     // Version by KA9Q to allow base frequency
-    float base_freq = 0;
+    double base_freq = 0;
     int c;
     while((c = getopt(argc,argv,"4f:")) != -1){
       switch(c){
@@ -427,7 +427,7 @@ int main(int argc, char** argv)
 		      year,mon,day,hr,minute,sec,
 		      cand->score,
 		      time_sec,
-		      1e6 * base_freq + freq_hz,
+		      1.0e6 * base_freq + freq_hz,
 		      message.text);
 	    }
 #else
