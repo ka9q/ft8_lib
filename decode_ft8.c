@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <locale.h>
 #include <libgen.h>
+#include <errno.h>
 
 
 #include "ft8/unpack.h"
@@ -261,7 +262,7 @@ int main(int argc, char** argv)
     }
     wav_path = argv[optind];
     if(access(wav_path,R_OK) == -1){
-      fprintf(stderr,"%s: Can't read %s\n",argv[0],wav_path);
+      fprintf(stderr,"%s: Can't read %s: %s\n",argv[0],wav_path,strerror(errno));
       exit(1);
     }
 #else
