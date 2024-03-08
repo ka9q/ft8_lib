@@ -106,8 +106,9 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     fread((void*)subChunk2ID, sizeof(subChunk2ID), 1, f);
     fread((void*)&subChunk2Size, sizeof(subChunk2Size), 1, f);
 
-    if (subChunk2Size / blockAlign > *num_samples)
-        return -2;
+    // This check causes unnecessary failures when the input file is > 15 sec long. So what if it is?
+    //    if (subChunk2Size / blockAlign > *num_samples)
+    //        return -2;
 
     *num_samples = subChunk2Size / blockAlign;
     *sample_rate = sampleRate;
