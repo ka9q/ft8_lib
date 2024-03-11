@@ -82,6 +82,8 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     char format[4]; // = {'W', 'A', 'V', 'E'};
 
     FILE* f = fopen(path, "rb");
+    if(f == NULL)
+      return -1;
 
     // NOTE: works only on little-endian architecture
     fread((void*)chunkID, sizeof(chunkID), 1, f);
@@ -103,6 +105,9 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     if (audioFormat != 1 || numChannels != 1 || bitsPerSample != 16)
         return -1;
 
+    if (blockAlign != 2)
+      return -1; // will screw up read if it isn't
+
     fread((void*)subChunk2ID, sizeof(subChunk2ID), 1, f);
     fread((void*)&subChunk2Size, sizeof(subChunk2Size), 1, f);
 
@@ -110,10 +115,13 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     //    if (subChunk2Size / blockAlign > *num_samples)
     //        return -2;
 
-    *num_samples = subChunk2Size / blockAlign;
-    *sample_rate = sampleRate;
+    // Why take these from the file? if they're garbage, we'll segfault
+    // They're already set by the caller
+    //    *num_samples = subChunk2Size / blockAlign;
+    //    *sample_rate = sampleRate;
 
-    int16_t* raw_data = (int16_t*)malloc(*num_samples * blockAlign);
+    // Init sample buffer to zero in case the read is short
+    int16_t* raw_data = (int16_t*)calloc(*num_samples, blockAlign);
 
     fread((void*)raw_data, blockAlign, *num_samples, f);
     for (int i = 0; i < *num_samples; i++)
