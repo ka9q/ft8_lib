@@ -74,14 +74,8 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 // Rewritten 4 May 2025 KA9Q to be more tolerant of variant headers
 int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path)
 {
-    char subChunkID[4]; // = {'f', 'm', 't', ' '};
-    uint32_t subChunkSize; // = 16;    // 16 for PCM
-    uint16_t audioFormat; // = 1;     // PCM = 1
-    uint16_t numChannels; // = 1;
-    uint16_t bitsPerSample; // = 16;
-    uint32_t sampleRate;
-    uint16_t blockAlign; // = numChannels * bitsPerSample / 8;
-    uint32_t byteRate; // = sampleRate * blockAlign;
+
+
 
     char chunkID[4]; // = {'R', 'I', 'F', 'F'};
     uint32_t chunkSize; // = 4 + (8 + subChunk1Size) + (8 + subChunk2Size);
@@ -100,32 +94,34 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     fread((void*)format, sizeof(format), 1, f);
     if(feof(f)){
       fprintf(stderr,"%s: premature EOF 1\n",path);
-      fclose(f);
-      return -1;
+      goto quit;
     }
     if(strncmp(chunkID,"RIFF",4) != 0){
       fprintf(stderr,"%s: not RIFF\n",path);
-      fclose(f);
-      return -1;
+      goto quit;
     }
 
     if(strncmp(format,"WAVE",4) !=0 ){
       fprintf(stderr,"%s: not WAVE\n",path);
-      fclose(f);
-      return -1;
+      goto quit;
     }
+    uint16_t audioFormat = 0; // = 1;     // PCM = 1
+    uint16_t numChannels = 0; // = 1;
+    uint16_t bitsPerSample = 0; // = 16;
+    uint32_t sampleRate = 0;
+    uint16_t blockAlign = 0; // = numChannels * bitsPerSample / 8;
+    uint32_t byteRate = 0; // = sampleRate * blockAlign;
 
     while(!feof(f)){
-      // Will normally hit EOF when trying to read the next chunk ID
-      fread((void*)subChunkID, sizeof(subChunkID), 1, f);
-      fread((void*)&subChunkSize, sizeof(subChunkSize), 1, f);
+      // Will normally hit EOF when trying to read the next chunk ID after data
+      fread((void*)chunkID, sizeof(chunkID), 1, f);
+      fread((void*)&chunkSize, sizeof(chunkSize), 1, f);
       if(feof(f))
 	break;
-      if(strncmp(subChunkID,"fmt ",4) == 0){
-	if(subChunkSize < 16){
-	  fprintf(stderr,"%s: subChunkSize too small %d\n",path,subChunkSize);
-	  fclose(f);
-	  return -1;
+      if(strncmp(chunkID,"fmt ",4) == 0){
+	if(chunkSize < 16){
+	  fprintf(stderr,"%s: chunkSize %d too small\n",path,chunkSize);
+	  goto quit;
 	}
 	// Standard part of header
 	fread((void*)&audioFormat, sizeof(audioFormat), 1, f);
@@ -136,28 +132,25 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	fread((void*)&bitsPerSample, sizeof(bitsPerSample), 1, f);
 	if(feof(f)){
 	  fprintf(stderr,"%s: premature EOF 3\n",path);
-	  fclose(f);
-	  return -1;
+	  goto quit;
 	}
-	if(subChunkSize > 16){
+	if(chunkSize > 16){
 	  // Skip the rest of the longer fmt header
-	  fseek(f,subChunkSize-16,SEEK_CUR); // Skip unsupported subchunk
+	  fseek(f,chunkSize-16,SEEK_CUR); // Skip unsupported chunk
 	}
 	if (numChannels != 1){
 	  fprintf(stderr,"%s: numChannels %d, must be 1\n", path,numChannels);
-	  fclose(f);
-	  return -1;
+	  goto quit;
 	}
-      } else if(strncmp(subChunkID,"data",4) == 0){
+      } else if(strncmp(chunkID,"data",4) == 0){
 	// Process data
-	if(subChunkSize / blockAlign < *num_samples){
-	  *num_samples = subChunkSize / blockAlign;
+	if(chunkSize / blockAlign < *num_samples){
+	  *num_samples = chunkSize / blockAlign;
 #if 0
-	  fprintf(stderr,"%s: short file; subChunkSize = %d, blockAlign = %d, num_samples = %d\n",
-		  path,subChunkSize, blockAlign, *num_samples);
-	  fclose(f);
-	  return -2;
-#endif	
+	  fprintf(stderr,"%s: short file; chunkSize = %d, blockAlign = %d, num_samples = %d\n",
+		  path,chunkSize, blockAlign, *num_samples);
+	  goto quit;
+#endif
 	}
 	*sample_rate = sampleRate;
 	int count = 0;
@@ -165,8 +158,7 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	case 1: // 16-bit signed int
 	  if(bitsPerSample != 16){
 	    fprintf(stderr,"%s: bits per sample %d for PCM; must be 16\n",path,bitsPerSample);
-	    fclose(f);
-	    return -1;
+	    goto quit;
 	  }
 	  int16_t* raw_data = (int16_t*)malloc(*num_samples * blockAlign);
 	  count = fread((void*)raw_data, blockAlign, *num_samples, f);
@@ -178,35 +170,33 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	case 3: // 32-bit float
 	  if(bitsPerSample != 32){
 	    fprintf(stderr,"%s: bits per sample %d for float; must be 32\n",path,bitsPerSample);
-	    fclose(f);
-	    return -1;
+	    goto quit;
 	  }
 	  count = fread(signal,blockAlign,*num_samples, f);
 	  break;
 	default:
 	  fprintf(stderr,"%s: unsupported audio format %d\n",path,audioFormat);
-	  fclose(f);
-	  return -1;
+	  goto quit;
 	}
-#if 0
 	if(count != *num_samples){
 	  fprintf(stderr,"%s: read length error: %d expected, %d actual\n",path,*num_samples,count);
-	  fclose(f);
-	  return -1;
+	  goto quit;
 	}
-
-#endif
 	// If we haven't read all the data in the file, skip over the rest of the chunk
 	// There will probably not be another chunk, but this will force the eof when we loop back to
 	// read another chunk
-	if(subChunkSize / blockAlign > *num_samples){
-	  long extra = subChunkSize - *num_samples * blockAlign;
+	if(chunkSize / blockAlign > *num_samples){
+	  long extra = chunkSize - *num_samples * blockAlign;
 	  fseek(f,extra,SEEK_CUR);
 	}
       } else {
-	fseek(f,subChunkSize,SEEK_CUR); // Skip unsupported subchunk
+	fseek(f,chunkSize,SEEK_CUR); // Skip unsupported subchunk
       }
     }
     fclose(f);
     return 0;
+ quit:
+    if(f != NULL)
+       fclose(f);
+    return -1;
 }
