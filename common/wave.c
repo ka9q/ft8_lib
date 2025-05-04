@@ -143,37 +143,66 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	  // Skip the rest of the longer fmt header
 	  fseek(f,subChunkSize-16,SEEK_CUR); // Skip unsupported subchunk
 	}
-	if (audioFormat != 1 || numChannels != 1 || bitsPerSample != 16){
-	  fprintf(stderr,"%s: audioFormat = %d, numChannels %d, bitsPerSample = %d\n",
-		  path,audioFormat,numChannels,bitsPerSample);
+	if (numChannels != 1){
+	  fprintf(stderr,"%s: numChannels %d, must be 1\n", path,numChannels);
 	  fclose(f);
 	  return -1;
 	}
       } else if(strncmp(subChunkID,"data",4) == 0){
 	// Process data
-#if 0
 	if(subChunkSize / blockAlign < *num_samples){
+	  *num_samples = subChunkSize / blockAlign;
+#if 0
 	  fprintf(stderr,"%s: short file; subChunkSize = %d, blockAlign = %d, num_samples = %d\n",
 		  path,subChunkSize, blockAlign, *num_samples);
 	  fclose(f);
 	  return -2;
-	}
 #endif	
-	*num_samples = subChunkSize / blockAlign;
+	}
 	*sample_rate = sampleRate;
-	int16_t* raw_data = (int16_t*)malloc(*num_samples * blockAlign);
-	int count = fread((void*)raw_data, blockAlign, *num_samples, f);
+	int count = 0;
+	switch(audioFormat){
+	case 1: // 16-bit signed int
+	  if(bitsPerSample != 16){
+	    fprintf(stderr,"%s: bits per sample %d for PCM; must be 16\n",path,bitsPerSample);
+	    fclose(f);
+	    return -1;
+	  }
+	  int16_t* raw_data = (int16_t*)malloc(*num_samples * blockAlign);
+	  count = fread((void*)raw_data, blockAlign, *num_samples, f);
+	  for (int i = 0; i < count; i++)
+	    signal[i] = raw_data[i] / 32768.0f;
+
+	  free(raw_data);
+	  break;
+	case 3: // 32-bit float
+	  if(bitsPerSample != 32){
+	    fprintf(stderr,"%s: bits per sample %d for float; must be 32\n",path,bitsPerSample);
+	    fclose(f);
+	    return -1;
+	  }
+	  count = fread(signal,blockAlign,*num_samples, f);
+	  break;
+	default:
+	  fprintf(stderr,"%s: unsupported audio format %d\n",path,audioFormat);
+	  fclose(f);
+	  return -1;
+	}
 #if 0
 	if(count != *num_samples){
 	  fprintf(stderr,"%s: read length error: %d expected, %d actual\n",path,*num_samples,count);
 	  fclose(f);
 	  return -1;
 	}
+
 #endif
-	for (int i = 0; i < count; i++) {
-	  signal[i] = raw_data[i] / 32768.0f;
+	// If we haven't read all the data in the file, skip over the rest of the chunk
+	// There will probably not be another chunk, but this will force the eof when we loop back to
+	// read another chunk
+	if(subChunkSize / blockAlign > *num_samples){
+	  long extra = subChunkSize - *num_samples * blockAlign;
+	  fseek(f,extra,SEEK_CUR);
 	}
-	free(raw_data);
       } else {
 	fseek(f,subChunkSize,SEEK_CUR); // Skip unsupported subchunk
       }
