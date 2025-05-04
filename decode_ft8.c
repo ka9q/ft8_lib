@@ -25,7 +25,7 @@
 #include "common/debug.h"
 #include "fft/kiss_fftr.h"
 
-#define LOG_LEVEL LOG_WARN
+#define LOG_LEVEL LOG_FATAL
 
 const int kMin_score = 10; // Minimum sync score threshold for candidates
 const int kMax_candidates = 120;
@@ -35,6 +35,7 @@ const int kMax_decoded_messages = 50;
 
 const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
+int Verbose = 0;
 
 void usage()
 {
@@ -242,8 +243,11 @@ int main(int argc, char** argv)
     // Version by KA9Q to allow base frequency
     double base_freq = 0;
     int c;
-    while((c = getopt(argc,argv,"4f:")) != -1){
+    while((c = getopt(argc,argv,"4f:v")) != -1){
       switch(c){
+      case 'v':
+	Verbose++;
+	break;
       case '4':
 	is_ft8 = false;
 	break;
@@ -264,6 +268,13 @@ int main(int argc, char** argv)
     if(access(wav_path,R_OK) == -1){
       fprintf(stderr,"%s: Can't read %s: %s\n",argv[0],wav_path,strerror(errno));
       exit(1);
+    }
+    if(base_freq == 0){
+      // Extract from file name
+      char *cp,*cp1;
+      if((cp = strchr(wav_path,'_')) != NULL && (cp1 = strrchr(wav_path,'_')) != NULL){
+	base_freq = strtod(cp+1,NULL) / 1e6;
+      }
     }
 #else
     // Parse arguments one by one
@@ -313,7 +324,7 @@ int main(int argc, char** argv)
     int rc = load_wav(signal, &num_samples, &sample_rate, wav_path);
     if (rc < 0)
     {
-        return -1;
+      fprintf(stderr,"load_wav returned -1\n");
     }
 
     LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
