@@ -516,5 +516,6 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
 
   monitor_free(&mon);
+  fflush(stdout);
   return 0;
 }
