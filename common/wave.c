@@ -44,7 +44,6 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
       fprintf(stderr,"can't write %s: %s\n",path,strerror(errno));
       return;
     }
-    flock(fileno(f),LOCK_EX); // Hold off any readers
 
     // NOTE: works only on little-endian architecture
     fwrite(chunkID, sizeof(chunkID), 1, f);
@@ -72,25 +71,19 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 
 // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
 // Rewritten 4 May 2025 KA9Q to be more tolerant of variant headers
-int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path)
-{
-
-
-
-    char chunkID[4]; // = {'R', 'I', 'F', 'F'};
-    uint32_t chunkSize; // = 4 + (8 + subChunk1Size) + (8 + subChunk2Size);
-    char format[4]; // = {'W', 'A', 'V', 'E'};
-
-    FILE* f = fopen(path, "rb");
+// Expects to be called with the file already open for reading on fd. path used only for error messages
+int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path,int fd){
+    FILE *f = fdopen(fd, "rb");
     if(f == NULL){
-      fprintf(stderr,"fopen(%s) failed: %s\n",path,strerror(errno));
+      fprintf(stderr,"fdopen(%s) failed: %s\n",path,strerror(errno));
       return -1;
     }
-    flock(fileno(f),LOCK_SH); // Wait for the file to be completely written
-
     // NOTE: works only on little-endian architecture
+    char chunkID[4]; // = {'R', 'I', 'F', 'F'};
     fread((void*)chunkID, sizeof(chunkID), 1, f);
+    uint32_t chunkSize; // = 4 + (8 + subChunk1Size) + (8 + subChunk2Size);
     fread((void*)&chunkSize, sizeof(chunkSize), 1, f); // Whole file size - 8
+    char format[4]; // = {'W', 'A', 'V', 'E'};
     fread((void*)format, sizeof(format), 1, f);
     if(feof(f)){
       fprintf(stderr,"%s: premature EOF 1\n",path);

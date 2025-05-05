@@ -1,8 +1,16 @@
 // unknown origin; hacked by Phil Karn, KA9Q Oct 2023
+// Heavily rewritten (again) by KA9Q May 2025 to handle multiple files and directories
+// decode_ft8 [-v] [-4] [-f megahertz] file_or_directory
+// If given a file, decodes just that file
+// If given a directory, scans and processes every file in that directory
+// Additionally, on Linux (only) waits for new files to appear in directory and processes them too
+// INPUT FILES ARE DELETED AFTER SUCCESSFUL DECODING!
+
 #define _GNU_SOURCE 1
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
 #include <sys/time.h>
@@ -11,7 +19,15 @@
 #include <locale.h>
 #include <libgen.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dirent.h>
 
+#include <limits.h>
+#include <sys/file.h>
+#ifdef __linux__
+#include <sys/inotify.h>
+#endif
 
 #include "ft8/unpack.h"
 #include "ft8/ldpc.h"
@@ -37,9 +53,10 @@ const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
 int Verbose = 0;
 
+int process_file(char const *wav_path,bool is_ft8,double base_freq);
 void usage()
 {
-  fprintf(stderr, "decode_ft8 [-4] [-f basefreq] file\n");
+  fprintf(stderr, "decode_ft8 [-4] [-f basefreq] file_or_directory\n");
 }
 
 static float hann_i(int i, int N)
@@ -233,225 +250,271 @@ void monitor_reset(monitor_t* me)
     me->max_mag = 0;
 }
 
-int main(int argc, char** argv)
-{
-    // Accepted arguments
-    const char* wav_path = NULL;
-    bool is_ft8 = true;
+int main(int argc, char *argv[]){
+  const char* path = NULL;
+  bool is_ft8 = true;
 
-#if 1
-    // Version by KA9Q to allow base frequency
-    double base_freq = 0;
-    int c;
-    while((c = getopt(argc,argv,"4f:v")) != -1){
-      switch(c){
-      case 'v':
-	Verbose++;
-	break;
-      case '4':
-	is_ft8 = false;
-	break;
-      case 'f':
-	base_freq = strtod(optarg,NULL); // Base freq in MHz
-	break;
+  // Base freq; if not specified with -f in megahertz, extracted from input filename of form
+  // yyyymmddThhmmssZ_ffffffff_usb.wav
+  // where yyyymmdd is year, month, day
+  // hhmmss is hour, minute, second UTC
+  // ffffffffff is frequency in *hertz*
+  double base_freq = 0;
+  int c;
+  while((c = getopt(argc,argv,"4f:v")) != -1){
+    switch(c){
+    case 'v':
+      Verbose++;
+      break;
+    case '4': // Decode FT4; default is FT8
+      is_ft8 = false;
+      break;
+    case 'f': // Base frequency in Megahertz, otherwise extracted from file name
+      base_freq = strtod(optarg,NULL);
+      break;
+    }
+  }
+  {
+    char *loc = getenv("LANG");
+    setlocale(LC_ALL,loc); // To get commas in long numerical strings
+  }
+  if(argc <= optind){
+    usage();
+    exit(1);
+  }
+  path = argv[optind];
+  struct stat statbuf;
+  if(stat(path,&statbuf) == -1){
+    fprintf(stderr,"Can't stat %s: %s\n",path,strerror(errno));
+    exit(1);
+  }
+  if((statbuf.st_mode & S_IFMT) == S_IFREG){
+    int r = process_file(path,is_ft8,base_freq);
+    exit(r);
+  } else if((statbuf.st_mode & S_IFMT) != S_IFDIR){
+    // only regular files and directories supported
+    fprintf(stderr,"Only regular files and directories supported\n");
+    exit(1);
+  }
+  // Scan for backlog of old spool files
+  DIR *dirp = opendir(path);
+  if(dirp == NULL){
+    fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
+    exit(1);
+  }
+  struct dirent *d = NULL;
+  while((d = readdir(dirp)) != NULL){
+    if(d->d_type == DT_REG)
+      process_file(d->d_name,is_ft8,base_freq);
+  }
+  closedir(dirp); dirp = NULL;
+
+#ifdef __linux__ // inotify is linux-only
+  if(Verbose)
+    printf("Monitoring %s\n",path);
+
+  int fd = inotify_init();
+  if(fd == -1){
+    perror("inotify_init");
+    exit(1);
+  }
+  // Only examine the file when it's closed for write.
+  int wd = inotify_add_watch(fd,path,IN_ONLYDIR|IN_CLOSE_WRITE);
+  if(wd == -1){
+    perror("inotify_add_watch");
+    exit(1);
+  }
+  char buffer[8192];
+  int len;
+  struct inotify_event *event = NULL;
+  while((len = read(fd,buffer,sizeof(buffer))) > 0){
+    for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
+      event = (struct inotify_event *)&buffer[i];
+      if(event->mask & IN_CLOSE_WRITE){
+	if(event->len > 0){
+	  // Ensure we only process ordinary files, not the directory
+	  // (The manpage says the directory itself might create an event)
+	  int r = stat(event->name,&statbuf);
+	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG)
+	    process_file(event->name,is_ft8,base_freq);
+	}
       }
     }
-    {
-      char *loc = getenv("LANG");
-      setlocale(LC_ALL,loc); // To get commas in long numerical strings
-    }    
-    if(argc <= optind){
-      usage();
-      exit(1);
-    }
-    wav_path = argv[optind];
-    if(access(wav_path,R_OK) == -1){
-      fprintf(stderr,"%s: Can't read %s: %s\n",argv[0],wav_path,strerror(errno));
-      exit(1);
-    }
-    if(base_freq == 0){
-      // Extract from file name
-      char *cp,*cp1;
-      if((cp = strchr(wav_path,'_')) != NULL && (cp1 = strrchr(wav_path,'_')) != NULL){
-	base_freq = strtod(cp+1,NULL) / 1e6;
-      }
-    }
-#else
-    // Parse arguments one by one
-    int arg_idx = 1;
-    while (arg_idx < argc)
-    {
-        // Check if the current argument is an option (-xxx)
-        if (argv[arg_idx][0] == '-')
-        {
-            // Check agaist valid options
-            if (0 == strcmp(argv[arg_idx], "-ft4"))
-            {
-                is_ft8 = false;
-            }
-            else
-            {
-                usage();
-                return -1;
-            }
-        }
-        else
-        {
-            if (wav_path == NULL)
-            {
-                wav_path = argv[arg_idx];
-            }
-            else
-            {
-                usage();
-                return -1;
-            }
-        }
-        ++arg_idx;
-    }
+  }
 #endif
-    // Check if all mandatory arguments have been received
-    if (wav_path == NULL)
+  exit(0);
+}
+
+// Process a single audio file, delete if successful
+// Return -1 on decoding error, 0 on success, 1 if the file couldn't be found or locked
+int process_file(char const *wav_path,bool is_ft8,double base_freq){
+  int sample_rate = 12000;
+  int num_samples = 15 * sample_rate;
+  float signal[num_samples];
+
+  if(strstr(wav_path,".lock") != NULL)
+    return 0; // Ignore lock files
+
+  // Try to open it
+  int fd = open(wav_path,O_RDONLY);
+  if(fd == -1)
+    return 1; // Somebody else aleady got to it
+
+  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
+    // Could happen if file is still being written
+    close(fd);
+    return 1;
+  }
+
+  // Try to lock it
+  char lockfile[PATH_MAX];
+  snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
+  int lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT);
+  if(lock_fd == -1){
+    close(fd);
+    return 1; // Somebody already got it
+  }
+  int pid = getpid();
+  dprintf(lock_fd,"%d\n",pid);
+  close(lock_fd); lock_fd = -1;
+  if(Verbose)
+    fprintf(stderr,"decode: %s\n",wav_path);
+
+  int rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+  close(fd); fd = -1;
+  if (rc < 0){
+    fprintf(stderr,"load_wav(%s) returned -1\n",wav_path);
+    return -1;
+  } else {
+    unlink(wav_path); // Done with it; still need the name later
+    unlink(lockfile); // And the lock file (delete after the file it locks)
+  }
+  if(base_freq == 0){
+    // Extract from file name
+    char *cp,*cp1;
+    if((cp = strchr(wav_path,'_')) != NULL && (cp1 = strrchr(wav_path,'_')) != NULL){
+      base_freq = strtod(cp+1,NULL) / 1e6;
+    }
+  }
+  LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
+
+  // Compute FFT over the whole signal and store it
+  monitor_t mon;
+  monitor_config_t mon_cfg = {
+    .f_min = 100,
+    .f_max = 3000,
+    .sample_rate = sample_rate,
+    .time_osr = kTime_osr,
+    .freq_osr = kFreq_osr,
+    .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
+  };
+  monitor_init(&mon, &mon_cfg);
+  LOG(LOG_DEBUG, "Waterfall allocated %d symbols\n", mon.wf.max_blocks);
+  for (int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
     {
-        usage();
-        return -1;
+      // Process the waveform data frame by frame - you could have a live loop here with data from an audio device
+      monitor_process(&mon, signal + frame_pos);
+    }
+  LOG(LOG_DEBUG, "Waterfall accumulated %d symbols\n", mon.wf.num_blocks);
+  LOG(LOG_INFO, "Max magnitude: %.1f dB\n", mon.max_mag);
+
+  // Find top candidates by Costas sync score and localize them in time and frequency
+  candidate_t candidate_list[kMax_candidates];
+  int num_candidates = ft8_find_sync(&mon.wf, kMax_candidates, candidate_list, kMin_score);
+
+  // Hash table for decoded messages (to check for duplicates)
+  int num_decoded = 0;
+  message_t decoded[kMax_decoded_messages];
+  message_t* decoded_hashtable[kMax_decoded_messages];
+
+  // Initialize hash table pointers
+  for (int i = 0; i < kMax_decoded_messages; ++i)
+    {
+      decoded_hashtable[i] = NULL;
     }
 
-    int sample_rate = 12000;
-    int num_samples = 15 * sample_rate;
-    float signal[num_samples];
-
-    int rc = load_wav(signal, &num_samples, &sample_rate, wav_path);
-    if (rc < 0)
+  // Go over candidates and attempt to decode messages
+  for (int idx = 0; idx < num_candidates; ++idx)
     {
-      fprintf(stderr,"load_wav returned -1\n");
-    }
+      const candidate_t* cand = &candidate_list[idx];
+      if (cand->score < kMin_score)
+	continue;
 
-    LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
+      float freq_hz = (cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
+      float time_sec = (cand->time_offset + (float)cand->time_sub / mon.wf.time_osr) * mon.symbol_period;
 
-    // Compute FFT over the whole signal and store it
-    monitor_t mon;
-    monitor_config_t mon_cfg = {
-        .f_min = 100,
-        .f_max = 3000,
-        .sample_rate = sample_rate,
-        .time_osr = kTime_osr,
-        .freq_osr = kFreq_osr,
-        .protocol = is_ft8 ? PROTO_FT8 : PROTO_FT4
-    };
-    monitor_init(&mon, &mon_cfg);
-    LOG(LOG_DEBUG, "Waterfall allocated %d symbols\n", mon.wf.max_blocks);
-    for (int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
-    {
-        // Process the waveform data frame by frame - you could have a live loop here with data from an audio device
-        monitor_process(&mon, signal + frame_pos);
-    }
-    LOG(LOG_DEBUG, "Waterfall accumulated %d symbols\n", mon.wf.num_blocks);
-    LOG(LOG_INFO, "Max magnitude: %.1f dB\n", mon.max_mag);
-
-    // Find top candidates by Costas sync score and localize them in time and frequency
-    candidate_t candidate_list[kMax_candidates];
-    int num_candidates = ft8_find_sync(&mon.wf, kMax_candidates, candidate_list, kMin_score);
-
-    // Hash table for decoded messages (to check for duplicates)
-    int num_decoded = 0;
-    message_t decoded[kMax_decoded_messages];
-    message_t* decoded_hashtable[kMax_decoded_messages];
-
-    // Initialize hash table pointers
-    for (int i = 0; i < kMax_decoded_messages; ++i)
-    {
-        decoded_hashtable[i] = NULL;
-    }
-
-    // Go over candidates and attempt to decode messages
-    for (int idx = 0; idx < num_candidates; ++idx)
-    {
-        const candidate_t* cand = &candidate_list[idx];
-        if (cand->score < kMin_score)
-            continue;
-
-        float freq_hz = (cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
-        float time_sec = (cand->time_offset + (float)cand->time_sub / mon.wf.time_osr) * mon.symbol_period;
-
-        message_t message;
-        decode_status_t status;
-        if (!ft8_decode(&mon.wf, cand, &message, kLDPC_iterations, &status))
+      message_t message;
+      decode_status_t status;
+      if (!ft8_decode(&mon.wf, cand, &message, kLDPC_iterations, &status))
         {
-            // printf("000000 %3d %+4.2f %4.0f ~  ---\n", cand->score, time_sec, freq_hz);
-            if (status.ldpc_errors > 0)
+	  // printf("000000 %3d %+4.2f %4.0f ~  ---\n", cand->score, time_sec, freq_hz);
+	  if (status.ldpc_errors > 0)
             {
-                LOG(LOG_DEBUG, "LDPC decode: %d errors\n", status.ldpc_errors);
+	      LOG(LOG_DEBUG, "LDPC decode: %d errors\n", status.ldpc_errors);
             }
-            else if (status.crc_calculated != status.crc_extracted)
+	  else if (status.crc_calculated != status.crc_extracted)
             {
-                LOG(LOG_DEBUG, "CRC mismatch!\n");
+	      LOG(LOG_DEBUG, "CRC mismatch!\n");
             }
-            else if (status.unpack_status != 0)
+	  else if (status.unpack_status != 0)
             {
-                LOG(LOG_DEBUG, "Error while unpacking!\n");
+	      LOG(LOG_DEBUG, "Error while unpacking!\n");
             }
-            continue;
+	  continue;
         }
 
-        LOG(LOG_DEBUG, "Checking hash table for %4.1fs / %4.1fHz [%d]...\n", time_sec, freq_hz, cand->score);
-        int idx_hash = message.hash % kMax_decoded_messages;
-        bool found_empty_slot = false;
-        bool found_duplicate = false;
-        do
+      LOG(LOG_DEBUG, "Checking hash table for %4.1fs / %4.1fHz [%d]...\n", time_sec, freq_hz, cand->score);
+      int idx_hash = message.hash % kMax_decoded_messages;
+      bool found_empty_slot = false;
+      bool found_duplicate = false;
+      do
         {
-            if (decoded_hashtable[idx_hash] == NULL)
+	  if (decoded_hashtable[idx_hash] == NULL)
             {
-                LOG(LOG_DEBUG, "Found an empty slot\n");
-                found_empty_slot = true;
+	      LOG(LOG_DEBUG, "Found an empty slot\n");
+	      found_empty_slot = true;
             }
-            else if ((decoded_hashtable[idx_hash]->hash == message.hash) && (0 == strcmp(decoded_hashtable[idx_hash]->text, message.text)))
+	  else if ((decoded_hashtable[idx_hash]->hash == message.hash) && (0 == strcmp(decoded_hashtable[idx_hash]->text, message.text)))
             {
-                LOG(LOG_DEBUG, "Found a duplicate [%s]\n", message.text);
-                found_duplicate = true;
+	      LOG(LOG_DEBUG, "Found a duplicate [%s]\n", message.text);
+	      found_duplicate = true;
             }
-            else
+	  else
             {
-                LOG(LOG_DEBUG, "Hash table clash!\n");
-                // Move on to check the next entry in hash table
-                idx_hash = (idx_hash + 1) % kMax_decoded_messages;
+	      LOG(LOG_DEBUG, "Hash table clash!\n");
+	      // Move on to check the next entry in hash table
+	      idx_hash = (idx_hash + 1) % kMax_decoded_messages;
             }
         } while (!found_empty_slot && !found_duplicate);
 
-        if (found_empty_slot)
+      if (found_empty_slot)
         {
-            // Fill the empty hashtable slot
-            memcpy(&decoded[idx_hash], &message, sizeof(message));
-            decoded_hashtable[idx_hash] = &decoded[idx_hash];
-            ++num_decoded;
+	  // Fill the empty hashtable slot
+	  memcpy(&decoded[idx_hash], &message, sizeof(message));
+	  decoded_hashtable[idx_hash] = &decoded[idx_hash];
+	  ++num_decoded;
 
-#if 1
-	    // Hacked by KA9Q to emit time prefix and actual frequency
-	    {
-	      char *path = strdup(wav_path);
-	      char const *bn = basename(path);
-	      int year,mon,day,hr,minute,sec;
-	      sscanf(bn,"%02d%02d%02d_%02d%02d%02d",&year,&mon,&day,&hr,&minute,&sec);
-	      year += 2000; // kludge
-	      free(path);
+	  // Hacked by KA9Q to emit time prefix and actual frequency
+	  // Assumes file name of the form 20250505T043345...
+	  {
+	    char *path = strdup(wav_path);
+	    char const *bn = basename(path);
+	    int year,mon,day,hr,minute,sec;
+	    char junk;
+	    sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
+	    free(path);
 
-	      fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
-		      year,mon,day,hr,minute,sec,
-		      cand->score,
-		      time_sec,
-		      1.0e6 * base_freq + freq_hz,
-		      message.text);
-	    }
-#else
-            // Fake WSJT-X-like output for now
-            int snr = 0; // TODO: compute SNR
-            printf("000000 %3d %+4.2f %4.0f ~  %s\n", cand->score, time_sec, freq_hz, message.text);
-#endif
+	    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
+		    year,mon,day,hr,minute,sec,
+		    cand->score,
+		    time_sec,
+		    1.0e6 * base_freq + freq_hz,
+		    message.text);
+	  }
         }
     }
-    LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
+  LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
 
-    monitor_free(&mon);
-
-    return 0;
+  monitor_free(&mon);
+  return 0;
 }
