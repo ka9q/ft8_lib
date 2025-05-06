@@ -80,11 +80,14 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     }
     // NOTE: works only on little-endian architecture
     char chunkID[4]; // = {'R', 'I', 'F', 'F'};
-    fread((void*)chunkID, sizeof(chunkID), 1, f);
+    if(fread((void*)chunkID, sizeof(chunkID), 1, f) != 1)
+      goto quit;
     uint32_t chunkSize; // = 4 + (8 + subChunk1Size) + (8 + subChunk2Size);
-    fread((void*)&chunkSize, sizeof(chunkSize), 1, f); // Whole file size - 8
+    if(fread((void*)&chunkSize, sizeof(chunkSize), 1, f) != 1)
+      goto quit;
     char format[4]; // = {'W', 'A', 'V', 'E'};
-    fread((void*)format, sizeof(format), 1, f);
+    if(fread((void*)format, sizeof(format), 1, f) != 1)
+      goto quit;
     if(feof(f)){
       fprintf(stderr,"%s: premature EOF 1\n",path);
       goto quit;
@@ -107,8 +110,10 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 
     while(!feof(f)){
       // Will normally hit EOF when trying to read the next chunk ID after data
-      fread((void*)chunkID, sizeof(chunkID), 1, f);
-      fread((void*)&chunkSize, sizeof(chunkSize), 1, f);
+      if(fread((void*)chunkID, sizeof(chunkID), 1, f) != 1)
+	goto quit;
+      if(fread((void*)&chunkSize, sizeof(chunkSize), 1, f) != 1)
+	goto quit;
       if(feof(f))
 	break;
       if(strncmp(chunkID,"fmt ",4) == 0){
@@ -117,12 +122,18 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	  goto quit;
 	}
 	// Standard part of header
-	fread((void*)&audioFormat, sizeof(audioFormat), 1, f);
-	fread((void*)&numChannels, sizeof(numChannels), 1, f);
-	fread((void*)&sampleRate, sizeof(sampleRate), 1, f);
-	fread((void*)&byteRate, sizeof(byteRate), 1, f);
-	fread((void*)&blockAlign, sizeof(blockAlign), 1, f);
-	fread((void*)&bitsPerSample, sizeof(bitsPerSample), 1, f);
+	if(fread((void*)&audioFormat, sizeof(audioFormat), 1, f) != 1)
+	  goto quit;
+	if(fread((void*)&numChannels, sizeof(numChannels), 1, f) != 1)
+	  goto quit;
+	if(fread((void*)&sampleRate, sizeof(sampleRate), 1, f) != 1)
+	  goto quit;
+	if(fread((void*)&byteRate, sizeof(byteRate), 1, f) != 1)
+	  goto quit;
+	if(fread((void*)&blockAlign, sizeof(blockAlign), 1, f) != 1)
+	  goto quit;
+	if(fread((void*)&bitsPerSample, sizeof(bitsPerSample), 1, f) != 1)
+	  goto quit;
 	if(feof(f)){
 	  fprintf(stderr,"%s: premature EOF 3\n",path);
 	  goto quit;

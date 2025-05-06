@@ -52,11 +52,13 @@ const int kMax_decoded_messages = 50;
 const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
 int Verbose = 0;
+bool NoDelete; // Don't delete input file after decoding
+
 
 int process_file(char const *wav_path,bool is_ft8,double base_freq);
 void usage()
 {
-  fprintf(stderr, "decode_ft8 [-4] [-f basefreq] file_or_directory\n");
+  fprintf(stderr, "decode_ft8 [-v] [-4] [-d] [-f basefreq] file_or_directory\n");
 }
 
 static float hann_i(int i, int N)
@@ -261,8 +263,11 @@ int main(int argc, char *argv[]){
   // ffffffffff is frequency in *hertz*
   double base_freq = 0;
   int c;
-  while((c = getopt(argc,argv,"4f:v")) != -1){
+  while((c = getopt(argc,argv,"4f:vn")) != -1){
     switch(c){
+    case 'n':
+      NoDelete = true;
+      break;
     case 'v':
       Verbose++;
       break;
@@ -369,7 +374,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   // Try to lock it
   char lockfile[PATH_MAX];
   snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
-  int lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT);
+  int lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
   if(lock_fd == -1){
     close(fd);
     return 1; // Somebody already got it
@@ -381,13 +386,24 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     fprintf(stderr,"decode: %s\n",wav_path);
 
   int rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+  flock(fd,LOCK_UN);
   close(fd); fd = -1;
   if (rc < 0){
     fprintf(stderr,"load_wav(%s) returned -1\n",wav_path);
     return -1;
+  } else if(is_ft8 && num_samples < 12.64 * sample_rate){
+    // not reached if file is still being written, because pcmrecord flocks it
+    unlink(lockfile);
+    return -1; // Too short, might still be written. Hopefully the flock above will have failed
+  } else if(!is_ft8 && num_samples < 4.48 * sample_rate){
+    // not reached if file is still being written, because pcmrecord flocks it
+    unlink(lockfile);
+    return -1; // Too short, might still be written. Hopefully the flock above will have failed
   } else {
-    unlink(wav_path); // Done with it; still need the name later
+    if(!NoDelete)
+      unlink(wav_path); // Done with it; still need the name later
     unlink(lockfile); // And the lock file (delete after the file it locks)
+    memset(lockfile,0,sizeof(lockfile)); // Just to be safe
   }
   if(base_freq == 0){
     // Extract from file name
