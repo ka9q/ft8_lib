@@ -111,9 +111,9 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     while(!feof(f)){
       // Will normally hit EOF when trying to read the next chunk ID after data
       if(fread((void*)chunkID, sizeof(chunkID), 1, f) != 1)
-	goto quit;
+	break;
       if(fread((void*)&chunkSize, sizeof(chunkSize), 1, f) != 1)
-	goto quit;
+	break;
       if(feof(f))
 	break;
       if(strncmp(chunkID,"fmt ",4) == 0){
