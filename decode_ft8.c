@@ -53,6 +53,7 @@ const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
 int Verbose = 0;
 bool NoDelete; // Don't delete input file after decoding
+bool Run_queue = false; // When true, exit after running queue (suitable for calling from cron)
 
 
 int process_file(char const *wav_path,bool is_ft8,double base_freq);
@@ -263,8 +264,11 @@ int main(int argc, char *argv[]){
   // ffffffffff is frequency in *hertz*
   double base_freq = 0;
   int c;
-  while((c = getopt(argc,argv,"4f:vn")) != -1){
+  while((c = getopt(argc,argv,"4f:vnr")) != -1){
     switch(c){
+    case 'r':
+      Run_queue = true;
+      break;
     case 'n':
       NoDelete = true;
       break;
@@ -313,6 +317,8 @@ int main(int argc, char *argv[]){
       process_file(d->d_name,is_ft8,base_freq);
   }
   closedir(dirp); dirp = NULL;
+  if(Run_queue)
+    exit(0); // Only run the queue, don't wait for more (suitable for calling from cron)
 
 #ifdef __linux__ // inotify is linux-only
   if(Verbose)
