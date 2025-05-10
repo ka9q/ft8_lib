@@ -322,7 +322,7 @@ int main(int argc, char *argv[]){
 
 #ifdef __linux__ // inotify is linux-only
   if(Verbose)
-    printf("Monitoring %s\n",path);
+    fprintf(stderr,"Monitoring %s\n",path);
 
   int fd = inotify_init();
   if(fd == -1){
@@ -547,7 +547,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 
   monitor_free(&mon);
   fflush(stdout);
-  // Done with the file (could have been deleted earlier)
+  // Done with the file (could have been deleted earlier, but just in case we crash)
   if(!NoDelete)
     unlink(wav_path); // Done with it; still need the name later
   unlink(lockfile); // And the lock file (delete after the file it locks)
