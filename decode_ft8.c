@@ -367,7 +367,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     return 0; // Ignore lock files
 
   // Try to open it
-  int fd = open(wav_path,O_RDONLY);
+  int const fd = open(wav_path,O_RDONLY);
   if(fd == -1)
     return 1; // Somebody else aleady got to it
 
@@ -380,36 +380,44 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   // Try to lock it
   char lockfile[PATH_MAX];
   snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
-  int lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
+  int const lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
   if(lock_fd == -1){
     close(fd);
     return 1; // Somebody already got it
   }
-  int pid = getpid();
+  int const pid = getpid();
   dprintf(lock_fd,"%d\n",pid);
-  close(lock_fd); lock_fd = -1;
+  close(lock_fd);
   if(Verbose)
     fprintf(stderr,"decode: %s\n",wav_path);
 
-  int rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+  int const rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
   flock(fd,LOCK_UN);
-  close(fd); fd = -1;
-  if (rc < 0){
-    fprintf(stderr,"load_wav(%s) returned -1\n",wav_path);
+  close(fd); // remove the lock file later
+  if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
+    // If the load fails due to an invalid format, or if the file is too short,
+    // and it's more than an hour old, get rid of it
+    // Otherwise leave it be in case it's still being written
+    struct stat statbuf = {0};
+    struct timespec ts = {0};
+    if(stat(wav_path,&statbuf) == 0
+       && timespec_get(&ts,TIME_UTC) != 0
+       && statbuf.st_mtime + 3600 < ts.tv_sec){
+      if(NoDelete){
+	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
+		wav_path,
+		(long long)statbuf.st_size,
+		ts.tv_sec - statbuf.st_mtime);
+      } else {
+	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old, deleting\n",
+		wav_path,
+		(long long)statbuf.st_size,
+		ts.tv_sec - statbuf.st_mtime);
+	unlink(wav_path);
+      }
+    }
+    unlink(lockfile);
     return -1;
-  } else if(is_ft8 && num_samples < 12.64 * sample_rate){
-    // not reached if file is still being written, because pcmrecord flocks it
-    unlink(lockfile);
-    return -1; // Too short, might still be written. Hopefully the flock above will have failed
-  } else if(!is_ft8 && num_samples < 4.48 * sample_rate){
-    // not reached if file is still being written, because pcmrecord flocks it
-    unlink(lockfile);
-    return -1; // Too short, might still be written. Hopefully the flock above will have failed
-  } else {
-    if(!NoDelete)
-      unlink(wav_path); // Done with it; still need the name later
-    unlink(lockfile); // And the lock file (delete after the file it locks)
-    memset(lockfile,0,sizeof(lockfile)); // Just to be safe
   }
   if(base_freq == 0){
     // Extract from file name
@@ -539,5 +547,9 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 
   monitor_free(&mon);
   fflush(stdout);
+  // Done with the file (could have been deleted earlier)
+  if(!NoDelete)
+    unlink(wav_path); // Done with it; still need the name later
+  unlink(lockfile); // And the lock file (delete after the file it locks)
   return 0;
 }
