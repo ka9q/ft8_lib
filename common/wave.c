@@ -147,6 +147,12 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
 	  goto quit;
 	}
       } else if(strncmp(chunkID,"data",4) == 0){
+        if (!signal) {
+	  // We need to compute the size required
+          *num_samples = chunkSize / blockAlign;
+          fclose(f);
+          return 0;
+        }
 	// Process data
 	if(chunkSize / blockAlign < *num_samples){
 	  *num_samples = chunkSize / blockAlign;
