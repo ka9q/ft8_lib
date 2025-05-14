@@ -306,12 +306,18 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    int sample_rate = 12000;
-    int num_samples = 15 * sample_rate;
-    float signal[num_samples];
+    int sample_rate;
+    int num_samples;
 
-    int rc = load_wav(signal, &num_samples, &sample_rate, wav_path);
-    if (rc < 0)
+    int rc = load_wav(NULL, &num_samples, &sample_rate, wav_path);
+    if (rc != 1) {
+        return -1;
+    }
+
+    float *signal = calloc(sizeof(float), num_samples);
+
+    rc = load_wav(signal, &num_samples, &sample_rate, wav_path);
+    if (rc != 0)
     {
         return -1;
     }
@@ -322,7 +328,7 @@ int main(int argc, char** argv)
     monitor_t mon;
     monitor_config_t mon_cfg = {
         .f_min = 100,
-        .f_max = 3000,
+        .f_max = sample_rate / 4,
         .sample_rate = sample_rate,
         .time_osr = kTime_osr,
         .freq_osr = kFreq_osr,

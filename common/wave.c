@@ -114,11 +114,20 @@ int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path
     // This check causes unnecessary failures when the input file is > 15 sec long. So what if it is?
     //    if (subChunk2Size / blockAlign > *num_samples)
     //        return -2;
+    //
+    int signal_buffer_size = *num_samples;
 
-    // Why take these from the file? if they're garbage, we'll segfault
-    // They're already set by the caller
-    //    *num_samples = subChunk2Size / blockAlign;
-    //    *sample_rate = sampleRate;
+    *num_samples = subChunk2Size / blockAlign;
+    *sample_rate = sampleRate;
+
+    if (!signal) {
+        fclose(f);
+        return 1;
+    }
+
+    if (signal_buffer_size < *num_samples) {
+        return -1;  // buffer not large enough
+    }
 
     // Init sample buffer to zero in case the read is short
     int16_t* raw_data = (int16_t*)calloc(*num_samples, blockAlign);
