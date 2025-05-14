@@ -398,6 +398,8 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     signal = calloc(sizeof(float), num_samples);
 
     if (signal) {
+      // Note that we have to reposition the fd back to the start of the file
+      lseek(fd, 0, SEEK_SET);
       rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
     } else {
       rc = -1;
