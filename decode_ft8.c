@@ -361,7 +361,7 @@ int main(int argc, char *argv[]){
 int process_file(char const *wav_path,bool is_ft8,double base_freq){
   int sample_rate = 12000;
   int num_samples = 15 * sample_rate;
-  float signal[num_samples];
+  float *signal = 0;
 
   if(strstr(wav_path,".lock") != NULL)
     return 0; // Ignore lock files
@@ -391,7 +391,20 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   if(Verbose)
     fprintf(stderr,"decode: %s\n",wav_path);
 
-  int const rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+  int fdcopy = dup(fd);
+  int rc = load_wav(signal, &num_samples, &sample_rate, wav_path, fdcopy);
+  if (rc == 0) {
+    // Yes, we don't free this on exit, but then the main program is about to exit anyway
+    signal = calloc(sizeof(float), num_samples);
+
+    if (signal) {
+      // Note that we have to reposition the fd back to the start of the file
+      lseek(fd, 0, SEEK_SET);
+      rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+    } else {
+      rc = -1;
+    }
+  }
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later
   if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
@@ -432,7 +445,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   monitor_t mon;
   monitor_config_t mon_cfg = {
     .f_min = 100,
-    .f_max = 3000,
+    .f_max = sample_rate / 4,
     .sample_rate = sample_rate,
     .time_osr = kTime_osr,
     .freq_osr = kFreq_osr,
