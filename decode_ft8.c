@@ -275,6 +275,9 @@ int main(int argc, char *argv[]){
     case 'v':
       Verbose++;
       break;
+    case '8':
+      is_ft8 = true; // In case it's not the default
+      break;
     case '4': // Decode FT4; default is FT8
       is_ft8 = false;
       break;
