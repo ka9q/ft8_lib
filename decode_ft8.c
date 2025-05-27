@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <signal.h>
 
 #include <limits.h>
 #include <sys/file.h>
@@ -55,6 +56,7 @@ int Verbose = 0;
 bool NoDelete; // Don't delete input file after decoding
 bool Run_queue = false; // When true, exit after running queue (suitable for calling from cron)
 
+static int has_suffix(const char *filename, const char *suffix);
 
 int process_file(char const *wav_path,bool is_ft8,double base_freq);
 void usage()
@@ -333,7 +335,7 @@ int main(int argc, char *argv[]){
     exit(1);
   }
   // Only examine the file when it's closed for write.
-  int wd = inotify_add_watch(fd,path,IN_ONLYDIR|IN_CLOSE_WRITE);
+  int wd = inotify_add_watch(fd,path,IN_CLOSE_WRITE|IN_MOVED_TO);
   if(wd == -1){
     perror("inotify_add_watch");
     exit(1);
@@ -344,7 +346,7 @@ int main(int argc, char *argv[]){
   while((len = read(fd,buffer,sizeof(buffer))) > 0){
     for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
       event = (struct inotify_event *)&buffer[i];
-      if(event->mask & IN_CLOSE_WRITE){
+      if(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)){
 	if(event->len > 0){
 	  // Ensure we only process ordinary files, not the directory
 	  // (The manpage says the directory itself might create an event)
@@ -366,8 +368,14 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   int num_samples = 15 * sample_rate;
   float signal[num_samples];
 
-  if(strstr(wav_path,".lock") != NULL)
+  if(wav_path == NULL || strlen(wav_path) == 0)
+    return 0;
+
+  if(has_suffix(wav_path,".lock"))
     return 0; // Ignore lock files
+
+  if(has_suffix(wav_path,".tmp"))
+    return 0; // Ignore temp files, wait for them to be renamed
 
   // Try to open it
   int const fd = open(wav_path,O_RDONLY);
@@ -381,15 +389,62 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   }
 
   // Try to lock it
-  char lockfile[PATH_MAX];
+  char lockfile[PATH_MAX+5]; // If too long, open will fail with ENAMETOOLONG
+  int lock_fd = -1;
   snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
-  int const lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
-  if(lock_fd == -1){
-    close(fd);
-    return 1; // Somebody already got it
+  int const TRIES = 5;
+  int tries;
+  for(tries = 0; tries < TRIES; tries++){
+    lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
+    if(lock_fd != -1)
+      break; // Successful lock creation
+
+    // Try to read an existing lock file
+    lock_fd = open(lockfile,O_RDONLY);
+    if(lock_fd == -1){
+      fprintf(stderr,"Attempt to open existing lockfile %s failed: %s\n",lockfile,strerror(errno));
+      return 1;
+    }
+    int pid;
+    int rcount = read(lock_fd,&pid,sizeof pid);
+    if(rcount != sizeof pid){
+      // rcount == 0 might happen if another task has created the lockfile but not yet written to it
+      // however, if the empty lock file is stale, we'll continue to treat the file as locked
+      // no truly race-free way to handle this, except by looking at its age
+      if(rcount < 0)
+	fprintf(stderr,"Attempt to read existing lockfile %s failed: %s\n",lockfile,strerror(errno));
+
+      close(lock_fd);
+      return 1;
+    }
+    close(lock_fd);
+    lock_fd = -1;
+    // Send it a kill -0 to see if it still exists
+    if(kill(pid,0) == 0)
+      return 1; // Locking process still exists
+    if(errno != ESRCH){
+      fprintf(stderr,"locking process %d exists but we can't send it a kill 0: %s\n",pid,strerror(errno));
+      return 1;
+    }
+    // Locking process no longer exists, remove the lock and try again
+    if(unlink(lockfile) != 0){
+      fprintf(stderr,"Attempt to unlink stale lockfile %s failed: %s\n",lockfile,strerror(errno));
+      return 1;
+    } // else try again to create lock
+    sleep(1);
   }
+  if(tries == 5){
+    fprintf(stderr,"Can't lock %s after %d tries\n",wav_path,TRIES);
+    return 1;
+  }
+
   int const pid = getpid();
-  dprintf(lock_fd,"%d\n",pid);
+  if(write(lock_fd,&pid,sizeof pid) != sizeof pid){
+    fprintf(stderr,"Can't write pid %d to lock file %s: %s\n",pid,lockfile,strerror(errno));
+    close(lock_fd);
+    unlink(lockfile);
+    return 1;
+  }
   close(lock_fd);
   if(Verbose)
     fprintf(stderr,"decode: %s\n",wav_path);
@@ -398,14 +453,11 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later
   if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
-    // If the load fails due to an invalid format, or if the file is too short,
-    // and it's more than an hour old, get rid of it
-    // Otherwise leave it be in case it's still being written
     struct stat statbuf = {0};
-    struct timespec ts = {0};
-    if(stat(wav_path,&statbuf) == 0
-       && timespec_get(&ts,TIME_UTC) != 0
-       && statbuf.st_mtime + 3600 < ts.tv_sec){
+
+    if(stat(wav_path,&statbuf) == 0){
+      struct timespec ts = {0};
+      timespec_get(&ts,TIME_UTC);
       if(NoDelete){
 	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
 		wav_path,
@@ -555,4 +607,14 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     unlink(wav_path); // Done with it; still need the name later
   unlink(lockfile); // And the lock file (delete after the file it locks)
   return 0;
+}
+// Returns 1 if filename ends with suffix (e.g., ".job"), else 0
+static int has_suffix(const char *filename, const char *suffix) {
+  size_t len_filename = strlen(filename);
+  size_t len_suffix = strlen(suffix);
+  
+  if (len_filename < len_suffix)
+    return 0; // too short to match
+  
+  return strcmp(filename + len_filename - len_suffix, suffix) == 0;
 }
