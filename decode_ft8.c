@@ -266,7 +266,7 @@ int main(int argc, char *argv[]){
   // ffffffffff is frequency in *hertz*
   double base_freq = 0;
   int c;
-  while((c = getopt(argc,argv,"4f:vnr")) != -1){
+  while((c = getopt(argc,argv,"48f:vnr")) != -1){
     switch(c){
     case 'r':
       Run_queue = true;
@@ -364,18 +364,11 @@ int main(int argc, char *argv[]){
 // Process a single audio file, delete if successful
 // Return -1 on decoding error, 0 on success, 1 if the file couldn't be found or locked
 int process_file(char const *wav_path,bool is_ft8,double base_freq){
-  int sample_rate = 12000;
-  int num_samples = 15 * sample_rate;
-  float signal[num_samples];
-
   if(wav_path == NULL || strlen(wav_path) == 0)
     return 0;
 
-  if(has_suffix(wav_path,".lock"))
-    return 0; // Ignore lock files
-
-  if(has_suffix(wav_path,".tmp"))
-    return 0; // Ignore temp files, wait for them to be renamed
+  if(!has_suffix(wav_path,".wav"))
+    return 0; // Ignores .tmp and .lock files, among others
 
   // Try to open it
   int const fd = open(wav_path,O_RDONLY);
@@ -392,9 +385,8 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   char lockfile[PATH_MAX+5]; // If too long, open will fail with ENAMETOOLONG
   int lock_fd = -1;
   snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
-  int const TRIES = 5;
-  int tries;
-  for(tries = 0; tries < TRIES; tries++){
+  int tries = 5;
+  for(; tries >= 0; tries--){
     lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
     if(lock_fd != -1)
       break; // Successful lock creation
@@ -403,6 +395,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     lock_fd = open(lockfile,O_RDONLY);
     if(lock_fd == -1){
       fprintf(stderr,"Attempt to open existing lockfile %s failed: %s\n",lockfile,strerror(errno));
+      close(fd);
       return 1;
     }
     int pid;
@@ -415,26 +408,32 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 	fprintf(stderr,"Attempt to read existing lockfile %s failed: %s\n",lockfile,strerror(errno));
 
       close(lock_fd);
+      close(fd);
       return 1;
     }
     close(lock_fd);
     lock_fd = -1;
     // Send it a kill -0 to see if it still exists
-    if(kill(pid,0) == 0)
+    if(kill(pid,0) == 0){
+      close(fd);
       return 1; // Locking process still exists
+    }
     if(errno != ESRCH){
+      close(fd);
       fprintf(stderr,"locking process %d exists but we can't send it a kill 0: %s\n",pid,strerror(errno));
       return 1;
     }
     // Locking process no longer exists, remove the lock and try again
     if(unlink(lockfile) != 0){
       fprintf(stderr,"Attempt to unlink stale lockfile %s failed: %s\n",lockfile,strerror(errno));
+      close(fd);
       return 1;
     } // else try again to create lock
     sleep(1);
   }
-  if(tries == 5){
-    fprintf(stderr,"Can't lock %s after %d tries\n",wav_path,TRIES);
+  if(tries < 0){
+    fprintf(stderr,"Can't lock %s\n",wav_path);
+    close(fd);
     return 1;
   }
 
@@ -443,12 +442,18 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     fprintf(stderr,"Can't write pid %d to lock file %s: %s\n",pid,lockfile,strerror(errno));
     close(lock_fd);
     unlink(lockfile);
+    close(fd);
     return 1;
   }
   close(lock_fd);
   if(Verbose)
     fprintf(stderr,"decode: %s\n",wav_path);
 
+  int sample_rate = 12000;
+  int num_samples = 15 * sample_rate; // 15 seconds
+  float signal[num_samples];
+
+  // What if the sample rate isn't 12k? it will overflow signal[]
   int const rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later
