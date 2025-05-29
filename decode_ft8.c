@@ -511,7 +511,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   LOG(LOG_INFO, "Max magnitude: %.1f dB\n", mon.max_mag);
 
   // Find top candidates by Costas sync score and localize them in time and frequency
-  int const candidate_size = (mon_cfg.f_max * kMax_candidates) / 3000; // Scale by bandwidth
+  int const candidate_size = (mon_cfg.f_max * kMax_candidates) / 3000; // Scale by bandwidth relative to the original 3 kHz
   candidate_t candidate_list[candidate_size];
   int num_candidates = ft8_find_sync(&mon.wf, candidate_size, candidate_list, kMin_score);
 
