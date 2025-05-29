@@ -325,7 +325,7 @@ int main(int argc, char *argv[]){
   if(Run_queue)
     exit(0); // Only run the queue, don't wait for more (suitable for calling from cron)
 
-#ifdef __linux__ // inotify is linux-only
+#ifdef __linux__ // inotify is linux-only; non-linux will have to run from cron for now
   if(Verbose)
     fprintf(stderr,"Monitoring %s\n",path);
 
@@ -334,10 +334,11 @@ int main(int argc, char *argv[]){
     perror("inotify_init");
     exit(1);
   }
-  // Only examine the file when it's closed for write.
+  // Only examine the file when it's closed for write or moved into place
   int wd = inotify_add_watch(fd,path,IN_CLOSE_WRITE|IN_MOVED_TO);
   if(wd == -1){
     perror("inotify_add_watch");
+    close(fd);
     exit(1);
   }
   char buffer[8192];
@@ -357,6 +358,7 @@ int main(int argc, char *argv[]){
       }
     }
   }
+  close(fd);
 #endif
   exit(0);
 }
@@ -446,20 +448,20 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     return 1;
   }
   close(lock_fd);
-  if(Verbose)
-    fprintf(stderr,"decode: %s\n",wav_path);
 
-  int sample_rate = 12000;
-  int num_samples = 15 * sample_rate; // 15 seconds
-  float signal[num_samples];
+  int sample_rate = 0; // These get overwritten by load_wav
+  int num_samples = 0;
+  float *signal = NULL; // now allocated by load_wav, must free if we ever loop
 
-  // What if the sample rate isn't 12k? it will overflow signal[]
-  int const rc = load_wav(signal, &num_samples, &sample_rate, wav_path,fd);
+  // load_wav now allocates signal, we must free (unless we exit right away, as we currently do)
+  int const rc = load_wav(&signal, &num_samples, &sample_rate, wav_path,fd);
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later
+  if(Verbose)
+    fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n",wav_path,num_samples,sample_rate);
+
   if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
     struct stat statbuf = {0};
-
     if(stat(wav_path,&statbuf) == 0){
       struct timespec ts = {0};
       timespec_get(&ts,TIME_UTC);
@@ -492,7 +494,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   monitor_t mon;
   monitor_config_t mon_cfg = {
     .f_min = 100,
-    .f_max = 3000,
+    .f_max = sample_rate/2 - 500, // allow room for the receiver filter rolloff
     .sample_rate = sample_rate,
     .time_osr = kTime_osr,
     .freq_osr = kFreq_osr,
@@ -509,8 +511,9 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   LOG(LOG_INFO, "Max magnitude: %.1f dB\n", mon.max_mag);
 
   // Find top candidates by Costas sync score and localize them in time and frequency
-  candidate_t candidate_list[kMax_candidates];
-  int num_candidates = ft8_find_sync(&mon.wf, kMax_candidates, candidate_list, kMin_score);
+  int const candidate_size = (mon_cfg.f_max * kMax_candidates) / 3000; // Scale by bandwidth
+  candidate_t candidate_list[candidate_size];
+  int num_candidates = ft8_find_sync(&mon.wf, candidate_size, candidate_list, kMin_score);
 
   // Hash table for decoded messages (to check for duplicates)
   int num_decoded = 0;
@@ -606,6 +609,7 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
 
   monitor_free(&mon);
+  free(signal); // allocated by load_wav
   fflush(stdout);
   // Done with the file (could have been deleted earlier, but just in case we crash)
   if(!NoDelete)
@@ -615,11 +619,13 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 }
 // Returns 1 if filename ends with suffix (e.g., ".job"), else 0
 static int has_suffix(const char *filename, const char *suffix) {
+  if(filename == NULL || suffix == NULL)
+    return 0;
   size_t len_filename = strlen(filename);
   size_t len_suffix = strlen(suffix);
-  
+
   if (len_filename < len_suffix)
     return 0; // too short to match
-  
+
   return strcmp(filename + len_filename - len_suffix, suffix) == 0;
 }

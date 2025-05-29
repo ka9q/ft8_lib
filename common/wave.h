@@ -10,7 +10,8 @@ extern "C"
   void save_wav(const float* signal, int num_samples, int sample_rate, const char* path);
 
   // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
-  int load_wav(float* signal, int* num_samples, int* sample_rate, const char* path,int fd);
+  // Now mallocs signal array, places in *signal, caller must free
+  int load_wav(float** signal, int* num_samples, int* sample_rate, const char* path,int fd);
 
 #ifdef __cplusplus
 }
