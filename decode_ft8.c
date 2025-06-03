@@ -475,10 +475,17 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 		wav_path,
 		(long long)statbuf.st_size,
 		ts.tv_sec - statbuf.st_mtime);
-	unlink(wav_path);
+	int r = unlink(wav_path);
+	if(r != 0)
+	  fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
       }
     }
-    unlink(lockfile);
+    {
+      int r = unlink(lockfile);
+      if(r != 0){
+	fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
+      }
+    }
     return -1;
   }
   if(base_freq == 0){
@@ -614,14 +621,13 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   // Done with the file (could have been deleted earlier, but just in case we crash)
   if(!NoDelete){
     int r = unlink(wav_path); // Done with it; still need the name later
-    if(r != 0){
+    if(r != 0)
       fprintf(stderr,"can't unlink %s: %s\n",wav_path,strerror(errno));
-    }
   }
   {
     int r = unlink(lockfile); // And the lock file (delete after the file it locks)
     if(r != 0)
-      fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));      
+      fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));
   }  return 0;
 }
 // Returns 1 if filename ends with suffix (e.g., ".job"), else 0

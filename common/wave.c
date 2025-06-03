@@ -151,34 +151,50 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
       }
     } else if(strncmp(chunkID,"data",4) == 0){
       // Process data
-      *num_samples = chunkSize / blockAlign;
+      if(chunkSize != 0xffffffff) // typical placeholder for "indeterminate"
+	*num_samples = chunkSize / blockAlign;
+      else
+	*num_samples = 10000000; // wing it: 10 million = 15 sec * 667 kHz
+
       *sample_rate = sampleRate;
       if(*signal == NULL) // What if it's not null? We don't know what it is, should it be freed?
 	*signal = malloc(sizeof(float) * numChannels * *num_samples);
 
       switch(audioFormat){
       case 1: // 16-bit signed int
-	if(bitsPerSample != 16){
-	  fprintf(stderr,"%s: bits per sample %d for PCM; must be 16\n",path,bitsPerSample);
-	  goto quit;
-	}
-	int i;
-	for(i = 0; i < *num_samples; i++){ // numChannels must be 1
-	  int16_t s;
-	  if(fread(&s,sizeof s, 1, f) != 1)
-	    break;
+	{
+	  if(bitsPerSample != 16){
+	    fprintf(stderr,"%s: bits per sample %d for PCM; must be 16\n",path,bitsPerSample);
+	    goto quit;
+	  }
+	  int count;
+	  for(count = 0; count < *num_samples; count++){ // numChannels must be 1
+	    int16_t s;
+	    if(fread(&s,sizeof s, 1, f) != 1)
+	      break;
 
-	  (*signal)[i] = s / 32768.0f;
+	    (*signal)[count] = s / 32768.0f; // compiler should optimize
+	  }
+	  if(count != *num_samples){
+	    // Trim buffer and return the actual count
+	    *signal = reallocf(*signal,sizeof(float) * numChannels * count);
+	    *num_samples = count;
+	  }
 	}
-	*num_samples = i;
 	break;
       case 3: // 32-bit float
-	if(bitsPerSample != 32){
-	  fprintf(stderr,"%s: bits per sample %d for float; must be 32\n",path,bitsPerSample);
-	  goto quit;
+	{
+	  if(bitsPerSample != 32){
+	    fprintf(stderr,"%s: bits per sample %d for float; must be 32\n",path,bitsPerSample);
+	    goto quit;
+	  }
+	  int const count = fread(*signal,blockAlign,*num_samples, f); // Read floating point directly
+	  if(count != *num_samples){
+	    // Trim buffer and return the actual count
+	    *signal = reallocf(*signal,sizeof(float) * numChannels * count);
+	    *num_samples = count;
+	  }
 	}
-	int const count = fread(*signal,blockAlign,*num_samples, f); // Read floating point directly
-	*num_samples = count;
 	break;
       default:
 	fprintf(stderr,"%s: unsupported audio format %d\n",path,audioFormat);
