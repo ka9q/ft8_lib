@@ -321,6 +321,15 @@ int main(int argc, char *argv[]){
     perror("inotify_init");
     exit(1);
   }
+  {
+    // Set inotify fd to nonblocking so we can use poll() on it
+    int flags = fcntl(fd,F_GETFL, 0);
+    if(flags == -1)
+      perror("get inotify fd flags");
+    int r = fcntl(fd,F_SETFL,flags | O_NONBLOCK);
+    if(r == -1)
+      perror("set inotify fd nonblock");
+  }
   // Only examine the file when it's closed for write or moved into place
   int wd = inotify_add_watch(fd,path,IN_CLOSE_WRITE|IN_MOVED_TO);
   if(wd == -1){
@@ -356,26 +365,32 @@ int main(int argc, char *argv[]){
       fprintf(stderr,"Poll error: %s\n",strerror(errno));
       break;
     }
-    if(pd.events & POLLIN){
-      char buffer[8192];
-      int len;
-      struct inotify_event *event = NULL;
-      while((len = read(fd,buffer,sizeof(buffer))) > 0){
-	for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
-	  event = (struct inotify_event *)&buffer[i];
-	  if(!(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)))
-	    continue;
-	  if(event->len <= 0)
-	    continue;
-	  // Ensure we only process ordinary files, not the directory
-	  // (The manpage says the directory itself might create an event)
-	  int r = stat(event->name,&statbuf);
-	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
-	    process_file(event->name,is_ft8,base_freq);
-	  }
+    if(!(pd.events & POLLIN))
+      continue;
+
+    char buffer[8192];
+    int len;
+    struct inotify_event *event = NULL;
+    while((len = read(fd,buffer,sizeof(buffer))) > 0){
+      for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
+	event = (struct inotify_event *)&buffer[i];
+	if(!(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)))
+	  continue;
+	if(event->len <= 0)
+	  continue;
+	// Ensure we only process ordinary files, not the directory
+	// (The manpage says the directory itself might create an event)
+	int r = stat(event->name,&statbuf);
+	if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
+	  process_file(event->name,is_ft8,base_freq);
 	}
       }
     }
+    if(len < 0 && errno != EAGAIN){
+      fprintf(stderr,"inotify read returns error: %s\n",strerror(errno));
+      break;
+    }
+    // Otherwise go back and poll
   }
   close(fd);
 #else
