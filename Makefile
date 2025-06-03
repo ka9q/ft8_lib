@@ -1,6 +1,6 @@
 CFLAGS = -O3 -ggdb3
 CPPFLAGS = -std=c11 -I.
-LDFLAGS = -latomic -lm
+LDFLAGS = -latomic -lbsd -lm
 
 TARGETS = gen_ft8 decode_ft8 test
 

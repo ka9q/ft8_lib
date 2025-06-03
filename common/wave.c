@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdint.h>
-#include <stdlib.h>
+#ifdef __linux
+#include <bsd/stdlib.h>
+#endif
 #include <sys/file.h>
 
 
