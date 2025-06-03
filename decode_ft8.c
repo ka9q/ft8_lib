@@ -57,7 +57,7 @@ bool NoDelete; // Don't delete input file after decoding
 bool Run_queue = false; // When true, exit after running queue (suitable for calling from cron)
 
 static int has_suffix(const char *filename, const char *suffix);
-
+void scanspool(char const *path, bool is_ft8, double base_freq);
 int process_file(char const *wav_path,bool is_ft8,double base_freq);
 void usage()
 {
@@ -310,22 +310,8 @@ int main(int argc, char *argv[]){
     fprintf(stderr,"Only regular files and directories supported\n");
     exit(1);
   }
-  // Scan for backlog of old spool files
-  DIR *dirp = opendir(path);
-  if(dirp == NULL){
-    fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
-    exit(1);
-  }
-  struct dirent *d = NULL;
-  while((d = readdir(dirp)) != NULL){
-    if(d->d_type == DT_REG)
-      process_file(d->d_name,is_ft8,base_freq);
-  }
-  closedir(dirp); dirp = NULL;
-  if(Run_queue)
-    exit(0); // Only run the queue, don't wait for more (suitable for calling from cron)
 
-#ifdef __linux__ // inotify is linux-only; non-linux will have to run from cron for now
+#ifdef __linux__ // inotify is linux-only; non-linux will run simple timer-based directory scan below
   if(Verbose)
     fprintf(stderr,"Monitoring %s\n",path);
 
@@ -341,14 +327,42 @@ int main(int argc, char *argv[]){
     close(fd);
     exit(1);
   }
-  char buffer[8192];
-  int len;
-  struct inotify_event *event = NULL;
-  while((len = read(fd,buffer,sizeof(buffer))) > 0){
-    for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
-      event = (struct inotify_event *)&buffer[i];
-      if(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)){
-	if(event->len > 0){
+  timespec last_poll = {0};
+
+  while(true){
+    // Re-scan the directory every 5 seconds
+    // Will happen on the first loop since last_poll is in the distant past
+    timespec now;
+    clock_gettime(CLOCK_REALTIME,&now);
+    if(now.tv_sec >= last_poll.tv_sec + 5){
+      scanspool(path,is_ft8,base_freq);
+      last_poll = now;
+      if(Run_queue)
+	exit(0);
+    }
+
+    // Don't block on the inotify read indefinitely
+    struct pollfd {
+      .fd = fd;
+      .events = POLLIN;
+    } pd;
+    int const timeout = 1000;
+
+    int r = poll(&fd,1,timeout);
+    if(r < 0){
+      fprintf(stderr,"Poll error: %s\n",strerror(errno));
+      break;
+    }
+    if(pd.events & POLLIN){
+      char buffer[8192];
+      int len;
+      while((len = read(fd,buffer,sizeof(buffer))) > 0){
+	for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
+	  struct inotify_event *event = (struct inotify_event *)&buffer[i];
+	  if(!(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)))
+	    continue;
+	  if(event->len <= 0)
+	    continue;
 	  // Ensure we only process ordinary files, not the directory
 	  // (The manpage says the directory itself might create an event)
 	  int r = stat(event->name,&statbuf);
@@ -359,6 +373,16 @@ int main(int argc, char *argv[]){
     }
   }
   close(fd);
+#else
+  // Simple timed directory scan without inotify
+  while(true){
+    // Re-scan the directory every 5 seconds
+    // Will happen on the first loop since last_poll is in the distant past
+    scanspool(path,is_ft8,base_freq);
+    if(Run_queue)
+      break;
+    sleep(random() & 7); // Random sleep between 0 and 7 sec; prevent synchronizing of multiple workers
+  }
 #endif
   exit(0);
 }
@@ -642,3 +666,18 @@ static int has_suffix(const char *filename, const char *suffix) {
 
   return strcmp(filename + len_filename - len_suffix, suffix) == 0;
 }
+void scanspool(char const *path, bool is_ft8, double base_freq){
+  // Scan for backlog of old spool files
+  DIR *dirp = opendir(path);
+  if(dirp == NULL){
+    fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
+    return;
+  }
+  struct dirent *d = NULL;
+  while((d = readdir(dirp)) != NULL){
+    if(d->d_type == DT_REG)
+      process_file(d->d_name,is_ft8,base_freq);
+  }
+  closedir(dirp);
+}
+
