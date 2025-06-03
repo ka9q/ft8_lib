@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <signal.h>
+#include <poll.h>
 
 #include <limits.h>
 #include <sys/file.h>
@@ -327,14 +328,16 @@ int main(int argc, char *argv[]){
     close(fd);
     exit(1);
   }
-  timespec last_poll = {0};
+  struct timespec last_poll = {0};
+  int poll_interval = 5; // Initial value doesn't really matter
 
   while(true){
     // Re-scan the directory every 5 seconds
     // Will happen on the first loop since last_poll is in the distant past
-    timespec now;
+    struct timespec now;
     clock_gettime(CLOCK_REALTIME,&now);
-    if(now.tv_sec >= last_poll.tv_sec + 5){
+    if(now.tv_sec >= last_poll.tv_sec + poll_interval){
+      poll_interval = random() & 7; // 0-7 inclusive
       scanspool(path,is_ft8,base_freq);
       last_poll = now;
       if(Run_queue)
@@ -342,13 +345,13 @@ int main(int argc, char *argv[]){
     }
 
     // Don't block on the inotify read indefinitely
-    struct pollfd {
-      .fd = fd;
-      .events = POLLIN;
-    } pd;
-    int const timeout = 1000;
+    struct pollfd pd = {
+      .fd = fd,
+      .events = POLLIN,
+    };
+    int timeout = 1000;
 
-    int r = poll(&fd,1,timeout);
+    int r = poll(&pd,1,timeout);
     if(r < 0){
       fprintf(stderr,"Poll error: %s\n",strerror(errno));
       break;
@@ -356,9 +359,10 @@ int main(int argc, char *argv[]){
     if(pd.events & POLLIN){
       char buffer[8192];
       int len;
+      struct inotify_event *event = NULL;
       while((len = read(fd,buffer,sizeof(buffer))) > 0){
 	for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
-	  struct inotify_event *event = (struct inotify_event *)&buffer[i];
+	  event = (struct inotify_event *)&buffer[i];
 	  if(!(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)))
 	    continue;
 	  if(event->len <= 0)
