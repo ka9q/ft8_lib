@@ -612,10 +612,17 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   free(signal); // allocated by load_wav
   fflush(stdout);
   // Done with the file (could have been deleted earlier, but just in case we crash)
-  if(!NoDelete)
-    unlink(wav_path); // Done with it; still need the name later
-  unlink(lockfile); // And the lock file (delete after the file it locks)
-  return 0;
+  if(!NoDelete){
+    int r = unlink(wav_path); // Done with it; still need the name later
+    if(r != 0){
+      fprintf(stderr,"can't unlink %s: %s\n",wav_path,strerror(errno));
+    }
+  }
+  {
+    int r = unlink(lockfile); // And the lock file (delete after the file it locks)
+    if(r != 0)
+      fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));      
+  }  return 0;
 }
 // Returns 1 if filename ends with suffix (e.g., ".job"), else 0
 static int has_suffix(const char *filename, const char *suffix) {
