@@ -372,7 +372,7 @@ int main(int argc, char *argv[]){
 	  int r = stat(event->name,&statbuf);
 	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
 	    if(Verbose)
-	      fprintf(stderr,"inotify: "); fflush(stderr);
+	      fprintf(stderr,"inotify: ");
 	    process_file(event->name,is_ft8,base_freq);
 	  }
 	}
