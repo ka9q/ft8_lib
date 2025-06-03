@@ -371,8 +371,6 @@ int main(int argc, char *argv[]){
 	  // (The manpage says the directory itself might create an event)
 	  int r = stat(event->name,&statbuf);
 	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
-	    if(Verbose)
-	      fprintf(stderr,"inotify: ");
 	    process_file(event->name,is_ft8,base_freq);
 	  }
 	}
@@ -676,9 +674,9 @@ static int has_suffix(const char *filename, const char *suffix) {
 }
 // Scan for backlog of old spool files
 void scanspool(char const *path, bool is_ft8, double base_freq){
-  if(Verbose){
+  if(Verbose)
     fprintf(stderr,"Scanning spool directory %s\n",path);
-  }
+
   DIR *dirp = opendir(path);
   if(dirp == NULL){
     fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
