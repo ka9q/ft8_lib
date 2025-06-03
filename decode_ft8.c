@@ -370,8 +370,11 @@ int main(int argc, char *argv[]){
 	  // Ensure we only process ordinary files, not the directory
 	  // (The manpage says the directory itself might create an event)
 	  int r = stat(event->name,&statbuf);
-	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG)
+	  if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
+	    if(Verbose)
+	      fprintf(stderr,"inotify: "); fflush(stderr);
 	    process_file(event->name,is_ft8,base_freq);
+	  }
 	}
       }
     }
@@ -656,7 +659,8 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
     int r = unlink(lockfile); // And the lock file (delete after the file it locks)
     if(r != 0)
       fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));
-  }  return 0;
+  }
+  return 0;
 }
 // Returns 1 if filename ends with suffix (e.g., ".job"), else 0
 static int has_suffix(const char *filename, const char *suffix) {
@@ -670,8 +674,11 @@ static int has_suffix(const char *filename, const char *suffix) {
 
   return strcmp(filename + len_filename - len_suffix, suffix) == 0;
 }
+// Scan for backlog of old spool files
 void scanspool(char const *path, bool is_ft8, double base_freq){
-  // Scan for backlog of old spool files
+  if(Verbose){
+    fprintf(stderr,"Scanning spool directory %s\n",path);
+  }
   DIR *dirp = opendir(path);
   if(dirp == NULL){
     fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
@@ -684,4 +691,3 @@ void scanspool(char const *path, bool is_ft8, double base_freq){
   }
   closedir(dirp);
 }
-
