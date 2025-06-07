@@ -1,5 +1,5 @@
 // unknown origin; hacked by Phil Karn, KA9Q Oct 2023
-// Heavily rewritten (again) by KA9Q May 2025 to handle multiple files and directories
+// Heavily rewritten (again) by KA9Q May/June 2025 to handle multiple files and directories
 // decode_ft8 [-v] [-4] [-f megahertz] file_or_directory
 // If given a file, decodes just that file
 // If given a directory, scans and processes every file in that directory
@@ -24,6 +24,7 @@
 #include <dirent.h>
 #include <signal.h>
 #include <poll.h>
+#include <assert.h>
 
 #include <limits.h>
 #include <sys/file.h>
@@ -53,18 +54,6 @@ const int kMax_decoded_messages = 50;
 
 const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
-int Verbose = 0;
-bool NoDelete; // Don't delete input file after decoding
-bool Run_queue = false; // When true, exit after running queue (suitable for calling from cron)
-
-static int has_suffix(const char *filename, const char *suffix);
-void scanspool(char const *path, bool is_ft8, double base_freq);
-int process_file(char const *wav_path,bool is_ft8,double base_freq);
-void usage()
-{
-  fprintf(stderr, "decode_ft8 [-v] [-4] [-d] [-f basefreq] file_or_directory\n");
-}
-
 static float hann_i(int i, int N)
 {
     float x = sinf((float)M_PI * i / N);
@@ -256,289 +245,10 @@ void monitor_reset(monitor_t* me)
     me->max_mag = 0;
 }
 
-int main(int argc, char *argv[]){
-  const char* path = NULL;
-  bool is_ft8 = true;
+// Process a buffer already loaded from a file
+// *path is passed only to extract date & time, the file is read in main()
+int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, char const *path){
 
-  // Base freq; if not specified with -f in megahertz, extracted from input filename of form
-  // yyyymmddThhmmssZ_ffffffff_usb.wav
-  // where yyyymmdd is year, month, day
-  // hhmmss is hour, minute, second UTC
-  // ffffffffff is frequency in *hertz*
-  double base_freq = 0;
-  int c;
-  while((c = getopt(argc,argv,"48f:vnr")) != -1){
-    switch(c){
-    case 'r':
-      Run_queue = true;
-      break;
-    case 'n':
-      NoDelete = true;
-      break;
-    case 'v':
-      Verbose++;
-      break;
-    case '8':
-      is_ft8 = true; // In case it's not the default
-      break;
-    case '4': // Decode FT4; default is FT8
-      is_ft8 = false;
-      break;
-    case 'f': // Base frequency in Megahertz, otherwise extracted from file name
-      base_freq = strtod(optarg,NULL);
-      break;
-    }
-  }
-  {
-    char *loc = getenv("LANG");
-    setlocale(LC_ALL,loc); // To get commas in long numerical strings
-  }
-  if(argc <= optind){
-    usage();
-    exit(1);
-  }
-  path = argv[optind];
-  struct stat statbuf;
-  if(stat(path,&statbuf) == -1){
-    fprintf(stderr,"Can't stat %s: %s\n",path,strerror(errno));
-    exit(1);
-  }
-  if((statbuf.st_mode & S_IFMT) == S_IFREG){
-    int r = process_file(path,is_ft8,base_freq);
-    exit(r);
-  } else if((statbuf.st_mode & S_IFMT) != S_IFDIR){
-    // only regular files and directories supported
-    fprintf(stderr,"Only regular files and directories supported\n");
-    exit(1);
-  }
-
-#ifdef __linux__ // inotify is linux-only; non-linux will run simple timer-based directory scan below
-  if(Verbose)
-    fprintf(stderr,"Monitoring %s\n",path);
-
-  int fd = inotify_init();
-  if(fd == -1){
-    perror("inotify_init");
-    exit(1);
-  }
-  {
-    // Set inotify fd to nonblocking so we can use poll() on it
-    int flags = fcntl(fd,F_GETFL, 0);
-    if(flags == -1)
-      perror("get inotify fd flags");
-    int r = fcntl(fd,F_SETFL,flags | O_NONBLOCK);
-    if(r == -1)
-      perror("set inotify fd nonblock");
-  }
-  // Only examine the file when it's closed for write or moved into place
-  int wd = inotify_add_watch(fd,path,IN_CLOSE_WRITE|IN_MOVED_TO);
-  if(wd == -1){
-    perror("inotify_add_watch");
-    close(fd);
-    exit(1);
-  }
-  struct timespec last_poll = {0};
-  int poll_interval = 5; // Initial value doesn't really matter
-
-  while(true){
-    // Re-scan the directory every 5 seconds
-    // Will happen on the first loop since last_poll is in the distant past
-    struct timespec now;
-    clock_gettime(CLOCK_REALTIME,&now);
-    if(now.tv_sec >= last_poll.tv_sec + poll_interval){
-      poll_interval = random() & 7; // 0-7 inclusive
-      scanspool(path,is_ft8,base_freq);
-      last_poll = now;
-      if(Run_queue)
-	exit(0);
-    }
-
-    // Don't block on the inotify read indefinitely
-    struct pollfd pd = {
-      .fd = fd,
-      .events = POLLIN,
-    };
-    int timeout = 1000;
-
-    int r = poll(&pd,1,timeout);
-    if(r < 0){
-      fprintf(stderr,"Poll error: %s\n",strerror(errno));
-      break;
-    }
-    if(!(pd.events & POLLIN))
-      continue;
-
-    char buffer[8192];
-    int len;
-    struct inotify_event *event = NULL;
-    while((len = read(fd,buffer,sizeof(buffer))) > 0){
-      for(int i=0; i < len;i += sizeof(struct inotify_event) + event->len){
-	event = (struct inotify_event *)&buffer[i];
-	if(!(event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)))
-	  continue;
-	if(event->len <= 0)
-	  continue;
-	// Ensure we only process ordinary files, not the directory
-	// (The manpage says the directory itself might create an event)
-	int r = stat(event->name,&statbuf);
-	if(r == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG){
-	  process_file(event->name,is_ft8,base_freq);
-	}
-      }
-    }
-    if(len < 0 && errno != EAGAIN){
-      fprintf(stderr,"inotify read returns error: %s\n",strerror(errno));
-      break;
-    }
-    // Otherwise go back and poll
-  }
-  close(fd);
-#else
-  // Simple timed directory scan without inotify
-  while(true){
-    // Re-scan the directory every 5 seconds
-    // Will happen on the first loop since last_poll is in the distant past
-    scanspool(path,is_ft8,base_freq);
-    if(Run_queue)
-      break;
-    sleep(random() & 7); // Random sleep between 0 and 7 sec; prevent synchronizing of multiple workers
-  }
-#endif
-  exit(0);
-}
-
-// Process a single audio file, delete if successful
-// Return -1 on decoding error, 0 on success, 1 if the file couldn't be found or locked
-int process_file(char const *wav_path,bool is_ft8,double base_freq){
-  if(wav_path == NULL || strlen(wav_path) == 0)
-    return 0;
-
-  if(!has_suffix(wav_path,".wav"))
-    return 0; // Ignores .tmp and .lock files, among others
-
-  // Try to open it
-  int const fd = open(wav_path,O_RDONLY);
-  if(fd == -1)
-    return 1; // Somebody else aleady got to it
-
-  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
-    // Could happen if file is still being written
-    close(fd);
-    return 1;
-  }
-
-  // Try to lock it
-  char lockfile[PATH_MAX+5]; // If too long, open will fail with ENAMETOOLONG
-  int lock_fd = -1;
-  snprintf(lockfile,sizeof lockfile,"%s.lock",wav_path);
-  int tries = 5;
-  for(; tries >= 0; tries--){
-    lock_fd = open(lockfile,O_WRONLY|O_EXCL|O_CREAT,0644);
-    if(lock_fd != -1)
-      break; // Successful lock creation
-
-    // Try to read an existing lock file
-    lock_fd = open(lockfile,O_RDONLY);
-    if(lock_fd == -1){
-      fprintf(stderr,"Attempt to open existing lockfile %s failed: %s\n",lockfile,strerror(errno));
-      close(fd);
-      return 1;
-    }
-    int pid;
-    int rcount = read(lock_fd,&pid,sizeof pid);
-    if(rcount != sizeof pid){
-      // rcount == 0 might happen if another task has created the lockfile but not yet written to it
-      // however, if the empty lock file is stale, we'll continue to treat the file as locked
-      // no truly race-free way to handle this, except by looking at its age
-      if(rcount < 0)
-	fprintf(stderr,"Attempt to read existing lockfile %s failed: %s\n",lockfile,strerror(errno));
-
-      close(lock_fd);
-      close(fd);
-      return 1;
-    }
-    close(lock_fd);
-    lock_fd = -1;
-    // Send it a kill -0 to see if it still exists
-    if(kill(pid,0) == 0){
-      close(fd);
-      return 1; // Locking process still exists
-    }
-    if(errno != ESRCH){
-      close(fd);
-      fprintf(stderr,"locking process %d exists but we can't send it a kill 0: %s\n",pid,strerror(errno));
-      return 1;
-    }
-    // Locking process no longer exists, remove the lock and try again
-    if(unlink(lockfile) != 0){
-      fprintf(stderr,"Attempt to unlink stale lockfile %s failed: %s\n",lockfile,strerror(errno));
-      close(fd);
-      return 1;
-    } // else try again to create lock
-    sleep(1);
-  }
-  if(tries < 0){
-    fprintf(stderr,"Can't lock %s\n",wav_path);
-    close(fd);
-    return 1;
-  }
-
-  int const pid = getpid();
-  if(write(lock_fd,&pid,sizeof pid) != sizeof pid){
-    fprintf(stderr,"Can't write pid %d to lock file %s: %s\n",pid,lockfile,strerror(errno));
-    close(lock_fd);
-    unlink(lockfile);
-    close(fd);
-    return 1;
-  }
-  close(lock_fd);
-
-  int sample_rate = 0; // These get overwritten by load_wav
-  int num_samples = 0;
-  float *signal = NULL; // now allocated by load_wav, must free if we ever loop
-
-  // load_wav now allocates signal, we must free (unless we exit right away, as we currently do)
-  int const rc = load_wav(&signal, &num_samples, &sample_rate, wav_path,fd);
-  flock(fd,LOCK_UN);
-  close(fd); // remove the lock file later
-  if(Verbose)
-    fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n",wav_path,num_samples,sample_rate);
-
-  if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
-    struct stat statbuf = {0};
-    if(stat(wav_path,&statbuf) == 0){
-      struct timespec ts = {0};
-      timespec_get(&ts,TIME_UTC);
-      if(NoDelete){
-	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
-		wav_path,
-		(long long)statbuf.st_size,
-		ts.tv_sec - statbuf.st_mtime);
-      } else {
-	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old, deleting\n",
-		wav_path,
-		(long long)statbuf.st_size,
-		ts.tv_sec - statbuf.st_mtime);
-	int r = unlink(wav_path);
-	if(r != 0)
-	  fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
-      }
-    }
-    {
-      int r = unlink(lockfile);
-      if(r != 0){
-	fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
-      }
-    }
-    return -1;
-  }
-  if(base_freq == 0){
-    // Extract from file name
-    char *cp,*cp1;
-    if((cp = strchr(wav_path,'_')) != NULL && (cp1 = strrchr(wav_path,'_')) != NULL){
-      base_freq = strtod(cp+1,NULL) / 1e6;
-    }
-  }
   LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
 
   // Compute FFT over the whole signal and store it
@@ -641,12 +351,13 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
 	  // Hacked by KA9Q to emit time prefix and actual frequency
 	  // Assumes file name of the form 20250505T043345...
 	  {
-	    char *path = strdup(wav_path);
-	    char const *bn = basename(path);
+	    // Temp copy to let basename modify it
+	    char *npath = strdup(path);
+	    char const *bn = basename(npath);
 	    int year,mon,day,hr,minute,sec;
 	    char junk;
 	    sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
-	    free(path);
+	    free(npath);
 
 	    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
 		    year,mon,day,hr,minute,sec,
@@ -660,47 +371,5 @@ int process_file(char const *wav_path,bool is_ft8,double base_freq){
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
 
   monitor_free(&mon);
-  free(signal); // allocated by load_wav
-  fflush(stdout);
-  // Done with the file (could have been deleted earlier, but just in case we crash)
-  if(!NoDelete){
-    int r = unlink(wav_path); // Done with it; still need the name later
-    if(r != 0)
-      fprintf(stderr,"can't unlink %s: %s\n",wav_path,strerror(errno));
-  }
-  {
-    int r = unlink(lockfile); // And the lock file (delete after the file it locks)
-    if(r != 0)
-      fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));
-  }
   return 0;
-}
-// Returns 1 if filename ends with suffix (e.g., ".job"), else 0
-static int has_suffix(const char *filename, const char *suffix) {
-  if(filename == NULL || suffix == NULL)
-    return 0;
-  size_t len_filename = strlen(filename);
-  size_t len_suffix = strlen(suffix);
-
-  if (len_filename < len_suffix)
-    return 0; // too short to match
-
-  return strcmp(filename + len_filename - len_suffix, suffix) == 0;
-}
-// Scan for backlog of old spool files
-void scanspool(char const *path, bool is_ft8, double base_freq){
-  if(Verbose)
-    fprintf(stderr,"Scanning spool directory %s\n",path);
-
-  DIR *dirp = opendir(path);
-  if(dirp == NULL){
-    fprintf(stderr,"Can't scan directory %s: %s\n",path,strerror(errno));
-    return;
-  }
-  struct dirent *d = NULL;
-  while((d = readdir(dirp)) != NULL){
-    if(d->d_type == DT_REG)
-      process_file(d->d_name,is_ft8,base_freq);
-  }
-  closedir(dirp);
 }

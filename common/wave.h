@@ -13,6 +13,8 @@ extern "C"
   // Now mallocs signal array, places in *signal, caller must free
   int load_wav(float** signal, int* num_samples, int* sample_rate, const char* path,int fd);
 
+  int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, char const *path);
+
 #ifdef __cplusplus
 }
 #endif
