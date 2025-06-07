@@ -1,6 +1,8 @@
 #ifndef _INCLUDE_WAVE_H_
 #define _INCLUDE_WAVE_H_
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C"
 {
