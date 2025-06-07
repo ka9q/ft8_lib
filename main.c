@@ -441,34 +441,39 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 
   // load_wav now allocates signal, we must free (unless we exit right away, as we currently do)
   assert(path != NULL);
-  int const rc = load_wav(&signal, &num_samples, &sample_rate, path,fd);
+  int const rc = load_wav(&signal, &num_samples, &sample_rate, path, fd);
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later
   if(Verbose)
-    fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n",path,num_samples,sample_rate);
+    fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n", path, num_samples, sample_rate);
 
   if (rc < 0 || num_samples < (is_ft8 ? 12.64 : 4.48 ) * sample_rate){
     struct stat statbuf = {0};
     if(lstat(path,&statbuf) == 0){
       struct timespec ts = {0};
       timespec_get(&ts,TIME_UTC);
-      if(NoDelete){
-	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
-		path,
-		(long long)statbuf.st_size,
-		ts.tv_sec - statbuf.st_mtime);
-      } else {
-	fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old, deleting\n",
-		path,
-		(long long)statbuf.st_size,
-		ts.tv_sec - statbuf.st_mtime);
-	int r = unlink(path);
-	if(r != 0)
-	  fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
+      int const age = ts.tv_sec - statbuf.st_mtime;
+      if(age > 60){
+	// ignore very young files in case they're still being written
+	// Could actually do this after 15 sec or so, but the directory scan will get it eventually
+	if(NoDelete){
+	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
+		  path,
+		  (long long)statbuf.st_size,
+		  age);
+	} else {
+	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old, deleting\n",
+		  path,
+		  (long long)statbuf.st_size,
+		  age);
+	  int r = unlink(path);
+	  if(r != 0)
+	    fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
+	}
       }
     }
     {
-      int r = unlink(lockfile);
+      int const r = unlink(lockfile);
       if(r != 0){
 	fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
       }
@@ -485,6 +490,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     }
   }
   // Do the actual decoding. path is passed just to extract date/time
+  // We could probably do that here
   process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, path);
   free(signal); // allocated by load_wav
   signal = NULL;
@@ -492,12 +498,12 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
   
   // Done with the file (could have been deleted earlier, but just in case we crash)
   if(!NoDelete){
-    int r = unlink(path); // Done with it; still need the name later
+    int const r = unlink(path); // Done with it; still need the name later
     if(r != 0)
       fprintf(stderr,"can't unlink %s: %s\n",path,strerror(errno));
   }
   {
-    int r = unlink(lockfile); // And the lock file (delete after the file it locks)
+    int const r = unlink(lockfile); // And the lock file (delete after the file it locks)
     if(r != 0)
       fprintf(stderr,"can't unlink %s: %s\n",lockfile,strerror(errno));
   }
@@ -538,10 +544,9 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
     fprintf(stderr,"Can't read current directory: %s\n",strerror(errno));
     return;
   }
-
   // chdir into the specified directory and work from there as
   // dirent entries will be interpreted relative to the current directory
-  // But we must free it before returning
+  // But we must pop back before returning
   if(strcmp(path,".") == 0){
     dir_fd = dup(cwd_fd); // No need to re-open if we're already there
     if(dir_fd == -1){
