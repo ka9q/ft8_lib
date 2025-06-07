@@ -273,7 +273,7 @@ int add_watches_recursive(int const fd, const char *path) {
   
   int const wd = inotify_add_watch(fd, path, IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE_SELF | IN_CREATE | IN_ISDIR);
   if(wd == -1){
-    fprintf(stderr,"inotify_add_watch(%s) failed: %\n",path,strerror(errno));
+    fprintf(stderr,"inotify_add_watch(%s) failed: %s\n",path,strerror(errno));
     return 0;
   }
   if(Verbose)
@@ -457,12 +457,12 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	// ignore very young files in case they're still being written
 	// Could actually do this after 15 sec or so, but the directory scan will get it eventually
 	if(NoDelete){
-	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old\n",
+	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'d seconds old\n",
 		  path,
 		  (long long)statbuf.st_size,
 		  age);
 	} else {
-	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'ld seconds old, deleting\n",
+	  fprintf(stderr,"%s: short/bad file, %'lld bytes, %'d seconds old, deleting\n",
 		  path,
 		  (long long)statbuf.st_size,
 		  age);
@@ -604,7 +604,8 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
   // Return to our originally scheduled program
 done:;
   if(cwd_fd != -1){
-    fchdir(cwd_fd); // Change back if necessary
+    if(fchdir(cwd_fd) == -1) // Change back if necessary
+      fprintf(stderr,"Can't change into current directory: %s\n",strerror(errno));
     close(cwd_fd);
   }
   if(dirp != NULL){
