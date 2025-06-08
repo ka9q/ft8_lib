@@ -1,36 +1,16 @@
-// unknown origin; hacked by Phil Karn, KA9Q Oct 2023
-// Heavily rewritten (again) by KA9Q May/June 2025 to handle multiple files and directories
-// decode_ft8 [-v] [-4] [-f megahertz] file_or_directory
-// If given a file, decodes just that file
-// If given a directory, scans and processes every file in that directory
-// Additionally, on Linux (only) waits for new files to appear in directory and processes them too
-// INPUT FILES ARE DELETED AFTER SUCCESSFUL DECODING!
+// Actual decoding code factored out by KA9Q June 2025
+// File/directory handling code is now in main.c
 
 #define _GNU_SOURCE 1
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
-#include <sys/time.h>
-#include <time.h>
-#include <unistd.h>
-#include <locale.h>
 #include <libgen.h>
 #include <errno.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <dirent.h>
-#include <signal.h>
-#include <poll.h>
 #include <assert.h>
-
 #include <limits.h>
-#include <sys/file.h>
-#ifdef __linux__
-#include <sys/inotify.h>
-#endif
 
 #include "ft8/unpack.h"
 #include "ft8/ldpc.h"
@@ -246,13 +226,13 @@ void monitor_reset(monitor_t* me)
 }
 
 // Process a buffer already loaded from a file
-// *path is passed only to extract date & time, the file is read in main()
+// 'path' is passed only to extract date & time, the file is actually read in main()
 int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, char const *path){
 
   LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
 
   // Compute FFT over the whole signal and store it
-  monitor_t mon;
+  monitor_t mon = {0};
   monitor_config_t mon_cfg = {
     .f_min = 100,
     .f_max = sample_rate/2 - 500, // allow room for the receiver filter rolloff
@@ -266,6 +246,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   for (int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
     {
       // Process the waveform data frame by frame - you could have a live loop here with data from an audio device
+      // (cool, but we'd have to get the decoding time from something other than the file name -- KA9Q)
       monitor_process(&mon, signal + frame_pos);
     }
   LOG(LOG_DEBUG, "Waterfall accumulated %d symbols\n", mon.wf.num_blocks);
@@ -278,14 +259,8 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
 
   // Hash table for decoded messages (to check for duplicates)
   int num_decoded = 0;
-  message_t decoded[kMax_decoded_messages];
-  message_t* decoded_hashtable[kMax_decoded_messages];
-
-  // Initialize hash table pointers
-  for (int i = 0; i < kMax_decoded_messages; ++i)
-    {
-      decoded_hashtable[i] = NULL;
-    }
+  message_t decoded[kMax_decoded_messages] = {0};
+  message_t* decoded_hashtable[kMax_decoded_messages] = {0};
 
   // Go over candidates and attempt to decode messages
   for (int idx = 0; idx < num_candidates; ++idx)

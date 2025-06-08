@@ -171,7 +171,7 @@ int main(int argc, char *argv[]){
       for(int i = 0; i < len; i += sizeof(struct inotify_event) + event->len){
 	event = (struct inotify_event *)&buffer[i];
 	// Find the directory it happened in
-	int hp = event->wd % HSIZE; 
+	int hp = event->wd % HSIZE;
 	int i;
 	for(i=0; i < HSIZE; i++){
 	  if(Wd_hashtab[hp].wd == event->wd)
@@ -182,7 +182,7 @@ int main(int argc, char *argv[]){
 	// We could find 'wd' with a null path if it had been created and deleted
 	char const * const dirname = (i != HSIZE) ? Wd_hashtab[hp].path : NULL;
 
-	if(Verbose){
+	if(Verbose > 1){
 	  fprintf(stderr,"wd %d, directory %s, name %s, length %d, event 0x%x ",event->wd,
 		  dirname, event->name, event->len,event->mask);
 	  void print_inotify_mask(uint32_t mask);
@@ -203,7 +203,7 @@ int main(int argc, char *argv[]){
 	  fprintf(stderr,"asprintf %s/%s failed\n",dirname, event->name);
 	  free(fullname);
 	  continue;
-	}	  
+	}
 	if(event->mask & IN_IGNORED){ // both flags set when directory is deleted
 	  // Kernel dropped a watch, a directory was removed
 	  // Would like to remove Wd_hashtable[h] entry but cannot
@@ -270,7 +270,7 @@ int add_watches_recursive(int const fd, const char *path) {
   DIR *dir = opendir(path);
   if (dir == NULL)
     return 0; // Fails if it's not a directory (eg. an ordinary file)
-  
+
   int const wd = inotify_add_watch(fd, path, IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE_SELF | IN_CREATE | IN_ISDIR);
   if(wd == -1){
     fprintf(stderr,"inotify_add_watch(%s) failed: %s\n",path,strerror(errno));
@@ -278,10 +278,10 @@ int add_watches_recursive(int const fd, const char *path) {
   }
   if(Verbose)
     fprintf(stderr,"wd %d watching directory %s\n",wd, path);
-  
+
   Watches++;
   // Add to hash table
-  int hp = wd % HSIZE; 
+  int hp = wd % HSIZE;
   int i;
   for(i=0; i < HSIZE; i++){
     if(Wd_hashtab[hp].wd == wd || Wd_hashtab[hp].wd == 0) // Will be wd if previously used
@@ -351,24 +351,6 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
   if(path == NULL || strlen(path) == 0)
     return -1;
 
-  struct stat statbuf;
-  if(lstat(path,&statbuf) == -1)
-    return -1; // Frequent occurrence if another copy is running
-
-  if((statbuf.st_mode & S_IFMT) != S_IFREG)
-    return -1;
-
-  // Try to open it
-  int const fd = open(path,O_RDONLY);
-  if(fd == -1)
-    return 1; // Somebody else aleady got to it
-  
-  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
-    // Could happen if file is still being written
-    close(fd);
-    return 1;
-  }
-  
   // Try to lock it
   char lockfile[PATH_MAX+5]; // If too long, open will fail with ENAMETOOLONG
   int lock_fd = -1;
@@ -383,7 +365,6 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     lock_fd = open(lockfile,O_RDONLY);
     if(lock_fd == -1){
       fprintf(stderr,"Attempt to open existing lockfile %s failed: %s\n",lockfile,strerror(errno));
-      close(fd);
       return 1;
     }
     int pid;
@@ -396,44 +377,60 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	fprintf(stderr,"Attempt to read existing lockfile %s failed: %s\n",lockfile,strerror(errno));
 
       close(lock_fd);
-      close(fd);
       return 1;
     }
     close(lock_fd);
     lock_fd = -1;
     // Send it a kill -0 to see if it still exists
-    if(kill(pid,0) == 0){
-      close(fd);
+    if(kill(pid,0) == 0)
       return 1; // Locking process still exists
-    }
+
     if(errno != ESRCH){
-      close(fd);
       fprintf(stderr,"locking process %d exists but we can't send it a kill 0: %s\n",pid,strerror(errno));
       return 1;
     }
     // Locking process no longer exists, remove the lock and try again
     if(unlink(lockfile) != 0){
       fprintf(stderr,"Attempt to unlink stale lockfile %s failed: %s\n",lockfile,strerror(errno));
-      close(fd);
       return 1;
     } // else try again to create lock
     sleep(1);
   }
   if(tries < 0){
     fprintf(stderr,"Can't lock %s\n",path);
-    close(fd);
     return 1;
   }
-
   int const pid = getpid();
   if(write(lock_fd,&pid,sizeof pid) != sizeof pid){
     fprintf(stderr,"Can't write pid %d to lock file %s: %s\n",pid,lockfile,strerror(errno));
     close(lock_fd);
     unlink(lockfile);
-    close(fd);
     return 1;
   }
   close(lock_fd);
+
+  // Lock successfully created, we now look at the file
+  struct stat statbuf;
+  if(lstat(path,&statbuf) == -1){
+    unlink(lockfile);
+    return -1;
+  }
+  if((statbuf.st_mode & S_IFMT) != S_IFREG){
+    unlink(lockfile);
+    return -1;
+  }
+  // Try to open it
+  int const fd = open(path,O_RDONLY);
+  if(fd == -1){
+    unlink(lockfile);
+    return 1; // Somebody else aleady got to it (unlikely with locking?)
+  }
+  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
+    // Could happen if file is still being written
+    close(fd);
+    unlink(lockfile);
+    return 1;
+  }
 
   int sample_rate = 0; // These get overwritten by load_wav
   int num_samples = 0;
@@ -443,7 +440,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
   assert(path != NULL);
   int const rc = load_wav(&signal, &num_samples, &sample_rate, path, fd);
   flock(fd,LOCK_UN);
-  close(fd); // remove the lock file later
+  close(fd); // remove the lock file later, after possible file removal
   if(Verbose)
     fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n", path, num_samples, sample_rate);
 
@@ -495,7 +492,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
   free(signal); // allocated by load_wav
   signal = NULL;
   fflush(stdout);
-  
+
   // Done with the file (could have been deleted earlier, but just in case we crash)
   if(!NoDelete){
     int const r = unlink(path); // Done with it; still need the name later
@@ -536,9 +533,9 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
   int dir_fd = -1;
   DIR *dirp = NULL;
 
-  if(Verbose)
+  if(Verbose > 1)
     fprintf(stderr,"processing directory %s\n",path);
-  
+
   cwd_fd = open(".", O_RDONLY|O_DIRECTORY);
   if(cwd_fd == -1){
     fprintf(stderr,"Can't read current directory: %s\n",strerror(errno));
@@ -620,6 +617,5 @@ done:;
 
 void usage()
 {
-  fprintf(stderr, "decode_ft8 [-v] [-4] [-d] [-f basefreq] file_or_directory\n");
+  fprintf(stderr, "decode_ft8 [-v] [-8|-4] [-d] [-f basefreq] file_or_directory\n");
 }
-
