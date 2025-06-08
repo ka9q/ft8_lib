@@ -506,8 +506,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     .tm_min = minute,
     .tm_sec = sec
   };
-  // Do the actual decoding. path is passed just to extract date/time
-  // We could probably do that here
+  // Do the actual decoding.
   process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp);
   free(signal); // allocated by load_wav
   signal = NULL;
