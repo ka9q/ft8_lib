@@ -3,34 +3,30 @@
 
 #define _GNU_SOURCE 1
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdbool.h>
 #include <libgen.h>
-#include <errno.h>
-#include <assert.h>
-#include <limits.h>
 
-#include "ft8/unpack.h"
-#include "ft8/ldpc.h"
 #include "ft8/decode.h"
 #include "ft8/constants.h"
-#include "ft8/encode.h"
-#include "ft8/crc.h"
 
-#include "common/common.h"
 #include "common/wave.h"
 #include "common/debug.h"
 #include "fft/kiss_fftr.h"
+#include "fft/kiss_fft.h"
 
 #define LOG_LEVEL LOG_FATAL
 
 const int kMin_score = 10; // Minimum sync score threshold for candidates
-const int kMax_candidates = 120;
+const int kMax_candidates = 120; // for 12 kHz sample rate; scaled for other sample rates
 const int kLDPC_iterations = 20;
 
-const int kMax_decoded_messages = 50;
+// This used to be 50. We're now looking at some wider bandwidths *and* FT8 is pretty popular
+// Making this bigger seems to only cost memory, which I now allocate from the heap, so what the hell
+const int kMax_decoded_messages = 1000;
 
 const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
 const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
@@ -259,10 +255,10 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
 
   // Hash table for decoded messages (to check for duplicates)
   int num_decoded = 0;
-  message_t decoded[kMax_decoded_messages];
-  message_t* decoded_hashtable[kMax_decoded_messages];
-  memset(decoded,0,kMax_decoded_messages * sizeof(message_t));
-  memset(decoded_hashtable,0, kMax_decoded_messages * sizeof(message_t *));
+  // Pointer to kMax_decoded_messages-element array of message_t structures
+  message_t *decoded = calloc(sizeof(message_t), kMax_decoded_messages);
+  // Pointer to kMax_decoded_messsages-element array of pointers to message_t structures
+  message_t **decoded_hashtable = calloc(sizeof(message_t *), kMax_decoded_messages);
 
   // Go over candidates and attempt to decode messages
   for (int idx = 0; idx < num_candidates; ++idx)
@@ -346,6 +342,8 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
         }
     }
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
+  free(decoded);
+  free(decoded_hashtable);
 
   monitor_free(&mon);
   return 0;
