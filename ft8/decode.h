@@ -46,6 +46,10 @@ extern "C"
         // TODO: check again that this size is enough
         char text[25]; ///< Plain text
         uint16_t hash; ///< Hash value to be used in hash table and quick checking for duplicates
+      // Store so we can display them after sorting
+      float freq_hz;   // We will sort on this
+      float time_sec;
+      int score;
     } message_t;
 
     /// Structure that contains the status of various steps during decoding of a message

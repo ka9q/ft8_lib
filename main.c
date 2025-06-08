@@ -9,6 +9,7 @@
 #define _GNU_SOURCE 1
 #include <stdint.h>
 #include <stdlib.h>
+#include <libgen.h>
 #include <signal.h>
 #include <string.h>
 #include <stdio.h>
@@ -488,9 +489,26 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       base_freq = strtod(cp+1,NULL) / 1e6;
     }
   }
+  // Extract date-time from file name
+  char *npath = strdup(path);
+  char const *bn = basename(npath);
+  int year,mon,day,hr,minute,sec;
+  char junk;
+  sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
+  free(npath);
+
+  // Convert to Unix-style struct tm (using its conventions)
+  struct tm const tmp = {
+    .tm_year = year - 1900,
+    .tm_mon = mon - 1,
+    .tm_mday = day,
+    .tm_hour = hr,
+    .tm_min = minute,
+    .tm_sec = sec
+  };
   // Do the actual decoding. path is passed just to extract date/time
   // We could probably do that here
-  process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, path);
+  process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp);
   free(signal); // allocated by load_wav
   signal = NULL;
   fflush(stdout);

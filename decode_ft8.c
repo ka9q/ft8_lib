@@ -221,9 +221,27 @@ void monitor_reset(monitor_t* me)
     me->max_mag = 0;
 }
 
+// Used to sort messages by ascending frequency, and to push empty entries to end
+int mcompare(void const *a, void const *b){
+  message_t const *ma = *(message_t const **)a;
+  message_t const *mb = *(message_t const **)b;
+  // Null entries go to end of list
+  if(ma == NULL && mb == NULL)
+    return 0;
+  else if(ma == NULL)
+    return +1;
+  else if(mb == NULL)
+    return -1;
+  if(ma->freq_hz > mb->freq_hz)
+    return +1;
+  else if(ma->freq_hz < mb->freq_hz)
+    return -1;
+  return 0;
+}
+
 // Process a buffer already loaded from a file
 // 'path' is passed only to extract date & time, the file is actually read in main()
-int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, char const *path){
+int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp){
 
   LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
 
@@ -290,6 +308,10 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
 	  continue;
         }
 
+      message.freq_hz = freq_hz; // Save so we can sort on it and display it
+      message.time_sec = time_sec;
+      message.score = cand->score;
+
       LOG(LOG_DEBUG, "Checking hash table for %4.1fs / %4.1fHz [%d]...\n", time_sec, freq_hz, cand->score);
       int idx_hash = message.hash % kMax_decoded_messages;
       bool found_empty_slot = false;
@@ -317,31 +339,34 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
       if (found_empty_slot)
         {
 	  // Fill the empty hashtable slot
-	  memcpy(&decoded[idx_hash], &message, sizeof(message));
+	  decoded[idx_hash] = message;
 	  decoded_hashtable[idx_hash] = &decoded[idx_hash];
 	  ++num_decoded;
 
-	  // Hacked by KA9Q to emit time prefix and actual frequency
-	  // Assumes file name of the form 20250505T043345...
-	  {
-	    // Temp copy to let basename modify it
-	    char *npath = strdup(path);
-	    char const *bn = basename(npath);
-	    int year,mon,day,hr,minute,sec;
-	    char junk;
-	    sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
-	    free(npath);
-
-	    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
-		    year,mon,day,hr,minute,sec,
-		    cand->score,
-		    time_sec,
-		    1.0e6 * base_freq + freq_hz,
-		    message.text);
-	  }
         }
     }
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
+  // Sort entire hash table, including null entries
+  qsort(decoded_hashtable, kMax_decoded_messages, sizeof *decoded_hashtable, mcompare);
+  // Pointers to valid messages now in first num_decoded elements of decoded_hashtable
+  for(int i=0; i < num_decoded; i++){
+    message_t *mp = decoded_hashtable[i];
+    if(mp == NULL)
+      continue; // Shouldn't happen
+
+    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
+		  tmp->tm_year + 1900,
+		  tmp->tm_mon + 1,
+		  tmp->tm_mday,
+		  tmp->tm_hour,
+		  tmp->tm_min,
+		  tmp->tm_sec,
+		  mp->score,
+		  mp->time_sec,
+		  1.0e6 * base_freq + mp->freq_hz,
+		  mp->text);
+
+  }
   free(decoded);
   free(decoded_hashtable);
 
