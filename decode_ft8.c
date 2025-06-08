@@ -261,8 +261,8 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   int num_decoded = 0;
   message_t decoded[kMax_decoded_messages];
   message_t* decoded_hashtable[kMax_decoded_messages];
-  memset(decoded,0,sizeof decoded);
-  memset(decoded_hashtable,0, kMax_decoded_messages * sizeof decoded_hashtable[0]);
+  memset(decoded,0,kMax_decoded_messages * sizeof(message_t));
+  memset(decoded_hashtable,0, kMax_decoded_messages * sizeof(message_t *));
 
   // Go over candidates and attempt to decode messages
   for (int idx = 0; idx < num_candidates; ++idx)
