@@ -7,24 +7,22 @@
 // INPUT FILES ARE DELETED AFTER SUCCESSFUL DECODING!
 
 #define _GNU_SOURCE 1
+#include <stdint.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
 #include <stdbool.h>
-#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 #include <locale.h>
-#include <libgen.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
-#include <signal.h>
 #include <poll.h>
 #include <assert.h>
+#include <getopt.h>
 
 #include <limits.h>
 #include <sys/file.h>
@@ -32,7 +30,6 @@
 #include <sys/inotify.h>
 #endif
 
-#include "common/common.h"
 #include "common/wave.h"
 #include "common/debug.h"
 
@@ -96,20 +93,22 @@ int main(int argc, char *argv[]){
     exit(1);
   }
   path = argv[optind];
-  struct stat statbuf;
-  if(lstat(path,&statbuf) == -1){
-    fprintf(stderr,"Can't stat %s: %s\n",path,strerror(errno));
-    exit(1);
-  }
-  if((statbuf.st_mode & S_IFMT) == S_IFREG){
-    // Regular file specified; process just it and quit
-    int r = process_file(path, is_ft8, base_freq);
-    exit(r);
-  }
-  if((statbuf.st_mode & S_IFMT) != S_IFDIR){
-    // Must be a directory at this point
-    fprintf(stderr,"Only regular files and directories supported\n");
-    exit(1);
+  {
+    struct stat statbuf;
+    if(lstat(path,&statbuf) == -1){
+      fprintf(stderr,"Can't stat %s: %s\n",path,strerror(errno));
+      exit(1);
+    }
+    if((statbuf.st_mode & S_IFMT) == S_IFREG){
+      // Regular file specified; process just it and quit
+      int r = process_file(path, is_ft8, base_freq);
+      exit(r);
+    }
+    if((statbuf.st_mode & S_IFMT) != S_IFDIR){
+      // Must be a directory at this point
+      fprintf(stderr,"Only regular files and directories supported\n");
+      exit(1);
+    }
   }
 #ifdef __linux__ // inotify is linux-only; non-linux will run simple timer-based directory scan below
   extern int Watches;
@@ -196,6 +195,22 @@ int main(int argc, char *argv[]){
 	if(strcmp(event->name,".") == 0 || strcmp(event->name, "..") == 0)
 	  continue; // igore anything regarding the current directory or its parent
 
+	if(event->mask & IN_IGNORED){ // both flags set when directory is deleted
+	  // Kernel dropped a watch, a directory was removed
+	  // Would like to remove Wd_hashtable[h] entry but cannot
+	  if(Verbose)
+	    fprintf(stderr,"Dropping watch %d on %s\n",event->wd,dirname);
+	  // Remove from hash table BUT leave wd unchanged as a "tombstone" for the deleted entry
+	  // so searches for other nearby values won't erroneously fail
+	  free(Wd_hashtab[hp].path);
+	  Wd_hashtab[hp].path = NULL; // Leave .wd in case the entry is reused
+	  Watches--;
+	  if(Watches == 0){
+	    fprintf(stderr,"No directory watches left, exiting\n");
+	    exit(0);
+	  }
+	  continue;
+	}
 	// Construct full pathname and process
 	char *fullname = NULL;
 	int r = asprintf(&fullname,"%s/%s",dirname, event->name);
@@ -204,22 +219,7 @@ int main(int argc, char *argv[]){
 	  free(fullname);
 	  continue;
 	}
-	if(event->mask & IN_IGNORED){ // both flags set when directory is deleted
-	  // Kernel dropped a watch, a directory was removed
-	  // Would like to remove Wd_hashtable[h] entry but cannot
-	  if(Verbose)
-	    fprintf(stderr,"Dropping watch %d on %s\n",event->wd,fullname);
-	  // Remove from hash table BUT leave wd entry, needed for hash tables of this type
-	  free(Wd_hashtab[hp].path);
-	  Wd_hashtab[hp].path = NULL; // Leave .wd in case the entry is reused
-	  free(fullname);
-	  Watches--;
-	  if(Watches == 0){
-	    fprintf(stderr,"No directory watches left, exiting\n");
-	    exit(0);
-	  }
-	  continue;
-	}
+
 	// Use lstat so we'll ignore symbolic links
 	struct stat statbuf;
 	if(lstat(fullname,&statbuf) != 0){
@@ -410,14 +410,16 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
   close(lock_fd);
 
   // Lock successfully created, we now look at the file
-  struct stat statbuf;
-  if(lstat(path,&statbuf) == -1){
-    unlink(lockfile);
-    return -1;
-  }
-  if((statbuf.st_mode & S_IFMT) != S_IFREG){
-    unlink(lockfile);
-    return -1;
+  {
+    struct stat statbuf;
+    if(lstat(path,&statbuf) == -1){
+      unlink(lockfile);
+      return -1;
+    }
+    if((statbuf.st_mode & S_IFMT) != S_IFREG){
+      unlink(lockfile);
+      return -1;
+    }
   }
   // Try to open it
   int const fd = open(path,O_RDONLY);
@@ -465,7 +467,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 		  age);
 	  int r = unlink(path);
 	  if(r != 0)
-	    fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
+	    fprintf(stderr,"can't delete %s: %s\n",path,strerror(errno));
 	}
       }
     }
@@ -525,6 +527,8 @@ int cmp_dirent(const void *a, const void *b) {
   return strcmp(sa->d_name, sb->d_name);
 }
 // Recursively scan a directory and process the files inside
+// If there are "too many" entries in a directory, ignore them and
+// we'll get them when we rescan the same directory on a timer
 void process_directory(char const *path, bool is_ft8, double base_freq){
   if(path == NULL)
     path = "."; // Default to current directory
@@ -544,18 +548,10 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
   // chdir into the specified directory and work from there as
   // dirent entries will be interpreted relative to the current directory
   // But we must pop back before returning
-  if(strcmp(path,".") == 0){
-    dir_fd = dup(cwd_fd); // No need to re-open if we're already there
-    if(dir_fd == -1){
-      fprintf(stderr,"Can't dup cwd fd: %s\n",strerror(errno));
-      goto done;
-    }
-  } else {
-    dir_fd = open(path,O_RDONLY|O_DIRECTORY);
-    if(dir_fd == -1){
-      fprintf(stderr,"Can't open directory %s: %s\n",path,strerror(errno));
-      goto done;
-    }
+  dir_fd = open(path,O_RDONLY|O_DIRECTORY);
+  if(dir_fd == -1){
+    fprintf(stderr,"Can't open directory %s: %s\n",path,strerror(errno));
+    goto done;
   }
   if(fchdir(dir_fd) != 0){
     fprintf(stderr,"Can't change into directory %s: %s\n",path,strerror(errno));
