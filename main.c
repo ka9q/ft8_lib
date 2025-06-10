@@ -39,6 +39,7 @@
 int Verbose = 0;
 bool NoDelete; // Don't delete input file after decoding
 bool Run_queue = false; // When true, exit after running queue (suitable for calling from cron)
+#define SORT_SIZE (8192) // Max size of file name sort list
 
 #define HSIZE 127
 struct wd_hashtab {
@@ -50,6 +51,7 @@ static int has_suffix(const char *filename, const char *suffix);
 int process_file(char const *path,bool is_ft8,double base_freq); // Either file or directory (calls recursively)
 void process_directory(char const *path, bool is_ft8, double base_freq); // Directory only; called recursively
 int add_watches_recursive(int fd, const char *path);
+int scompare(void const *a, void const *b);
 void usage();
 
 int main(int argc, char *argv[]){
@@ -168,7 +170,10 @@ int main(int argc, char *argv[]){
     int len;
     struct inotify_event *event = NULL;
     while((len = read(fd,buffer,sizeof(buffer))) > 0){
-      for(int i = 0; i < len; i += sizeof(struct inotify_event) + event->len){
+      char *file_list[SORT_SIZE] = {0}; // List of files to sort and process from each event
+      int filecount = 0;
+      int event_num = 0;
+      for(int i = 0; i < len; i += sizeof(struct inotify_event) + event->len,event_num++){
 	event = (struct inotify_event *)&buffer[i];
 	// Find the directory it happened in
 	int hp = event->wd % HSIZE;
@@ -183,8 +188,8 @@ int main(int argc, char *argv[]){
 	char const * const dirname = (i != HSIZE) ? Wd_hashtab[hp].path : NULL;
 
 	if(Verbose > 1){
-	  fprintf(stderr,"wd %d, directory %s, name %s, length %d, event 0x%x ",event->wd,
-		  dirname, event->name, event->len,event->mask);
+	  fprintf(stderr,"wd %d, event %d, directory %s, name %s, length %d, event 0x%x ",event->wd,
+		  event_num,dirname, event->name, event->len,event->mask);
 	  void print_inotify_mask(uint32_t mask);
 	  print_inotify_mask(event->mask);
 	  fprintf(stderr,"\n");
@@ -220,26 +225,39 @@ int main(int argc, char *argv[]){
 	  free(fullname);
 	  continue;
 	}
-
 	// Use lstat so we'll ignore symbolic links
 	struct stat statbuf;
 	if(lstat(fullname,&statbuf) != 0){
 	  free(fullname);
 	  continue;
 	}
-	if((statbuf.st_mode & S_IFMT) == S_IFREG && (event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO))){
-	  // File created or atomically moved into place
-	  // We ignore everything but .wav files
-	  // The usual sequence is for pcmrecord to write a .wav.tmp file and atomically rename it
-	  // This causes a IN_CLOSE_WRITE event on the tmp followed by IN_MOVED_TO the wav filename
-	  // We also monitor IN_CLOSE_WRITE in case a .wav file is written directly, without renaming
-	  if(has_suffix(fullname,".wav"))
-	    process_file(fullname, is_ft8, base_freq);
-	} else if((statbuf.st_mode & S_IFMT) == S_IFDIR && (event->mask & IN_CREATE) && (event->mask & IN_ISDIR)){
-	  // New directory appeared; add it to the list
-	  add_watches_recursive(fd, fullname);
+	switch(statbuf.st_mode & S_IFMT){
+	case S_IFREG:
+	  if((event->mask & (IN_CLOSE_WRITE | IN_MOVED_TO)) && has_suffix(fullname,".wav")){
+	    // The usual sequence is for pcmrecord to write a .wav.tmp file and atomically rename it
+	    // This causes a IN_CLOSE_WRITE event on the tmp followed by IN_MOVED_TO the wav filename
+	    // We also monitor IN_CLOSE_WRITE in case a .wav file is written directly, without renaming
+	    // Add to list for sorting
+	    if(filecount < SORT_SIZE)
+	      file_list[filecount++] = strdup(fullname);
+	    else
+	      process_file(fullname, is_ft8, base_freq); // sort table is full (unlikely) so just process it
+	  }
+	  break;
+	case S_IFDIR:
+	  if((event->mask & IN_CREATE) && (event->mask & IN_ISDIR)){
+	    // New directory appeared; add it to the list
+	    add_watches_recursive(fd, fullname);
+	  }
+	  break;
 	}
 	free(fullname);
+      }
+      // Sort and process list of files in each event
+      qsort(file_list,filecount,sizeof file_list[0],scompare);
+      for(int i=0; i < filecount; i++){
+	process_file(file_list[i], is_ft8, base_freq);
+	free(file_list[i]);
       }
     }
     if(len < 0 && errno != EAGAIN){
@@ -263,6 +281,17 @@ int main(int argc, char *argv[]){
   exit(0);
 }
 #ifdef __linux__
+int scompare(void const *a, void const *b){
+  char const *ap = *(char const **)a;
+  char const *bp = *(char const **)b;
+  // Shorter strings (lower frequencies) always compare less
+  if(strlen(ap) < strlen(bp))
+    return -1;
+  if(strlen(ap) > strlen(bp))
+    return +1;
+  return strcmp(ap,bp);
+}
+
 // Add a directory to the watch list
 int Watches = 0;
 int add_watches_recursive(int const fd, const char *path) {
@@ -580,36 +609,34 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
     goto done;
   }
   // Sort entries from oldest to newest
-  // If there are more than 1024 files, we'll get them next time
-  struct dirent list[1024] = {0};
-  int namecount = 0;
+  // If there are more than SORT_SIZE files, we'll get them next time
+  char *file_list[SORT_SIZE] = {0};
+  int filecount = 0;
   struct dirent *d = NULL;
   while((d = readdir(dirp)) != NULL){
     if(strlen(d->d_name) == 0)
       continue; // can this happen?
     // ignore directories "." and ".." or we'd recurse forever
-    else if(d->d_type == DT_DIR && (strcmp(d->d_name,".") == 0 || strcmp(d->d_name,"..") == 0))
-      continue;
-
-    if(d->d_type == DT_REG && !has_suffix(d->d_name,".wav"))
-      continue; // Process only .wav files, ignore tmp and lock
-
-    strncpy(list[namecount].d_name, d->d_name, sizeof list[namecount].d_name);
-    list[namecount++].d_type = d->d_type;
-    // What about symbolic links?
-    if(namecount == 1024)
+    switch(d->d_type){
+    case DT_DIR:
+      if(strcmp(d->d_name,".") != 0 && strcmp(d->d_name,"..") != 0)
+	process_directory(d->d_name, is_ft8, base_freq); // Recursive call
       break;
+    case DT_REG:
+      if(has_suffix(d->d_name,".wav") && filecount < SORT_SIZE)
+	file_list[filecount++] = strdup(d->d_name); // d_name changes when readdir is called again
+      break;
+    default:
+      break;
+    }
   }
   closedir(dirp);
   dir_fd = -1; // closedir does this
   dirp = NULL;
-  qsort(list,namecount,sizeof list[0],&cmp_dirent);
-  for(int i=0; i < namecount; i++){
-    assert(list[i].d_name != NULL);
-    if(list[i].d_type == DT_DIR)
-      process_directory(list[i].d_name, is_ft8, base_freq);
-    else if(list[i].d_type == DT_REG)
-      process_file(list[i].d_name, is_ft8, base_freq);
+  qsort(file_list,filecount,sizeof file_list[0],scompare);
+  for(int i=0; i < filecount; i++){
+    process_file(file_list[i], is_ft8, base_freq);
+    free(file_list[i]);
   }
   // Return to our originally scheduled program
 done:;
