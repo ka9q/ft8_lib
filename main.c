@@ -254,6 +254,8 @@ int main(int argc, char *argv[]){
 	free(fullname);
       }
       // Sort and process list of files in each event
+      // Doesn't really work well because the events are often split across several reads
+      // and I'd rather not delay artificially
       qsort(file_list,filecount,sizeof file_list[0],scompare);
       for(int i=0; i < filecount; i++){
 	process_file(file_list[i], is_ft8, base_freq);
@@ -587,10 +589,9 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
     fprintf(stderr,"processing directory %s\n",path);
 
   cwd_fd = open(".", O_RDONLY|O_DIRECTORY);
-  if(cwd_fd == -1){
+  if(cwd_fd == -1)
     fprintf(stderr,"Can't read current directory: %s\n",strerror(errno));
-    return;
-  }
+
   // chdir into the specified directory and work from there as
   // dirent entries will be interpreted relative to the current directory
   // But we must pop back before returning
