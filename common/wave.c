@@ -217,6 +217,8 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
   fclose(f);
   return 0;
  quit:
+  // If this was because of a .wav read failure, we could fall back to the external file attributes and try to read it as a raw file
+  // To be added?
   if(f != NULL)
     fclose(f);
   return -1;
