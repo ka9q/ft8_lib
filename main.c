@@ -24,7 +24,7 @@
 #include <poll.h>
 #include <assert.h>
 #include <getopt.h>
-
+#include <sys/xattr.h>
 #include <limits.h>
 #include <sys/file.h>
 #ifdef __linux__
@@ -512,31 +512,78 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     return -1;
   }
   if(base_freq == 0){
-    // Extract from file name
     assert(path != NULL);
-    char *cp,*cp1;
-    // Should use basename in case directory element has _
-    if((cp = strchr(path,'_')) != NULL && (cp1 = strrchr(path,'_')) != NULL){
-      base_freq = strtod(cp+1,NULL) / 1e6;
+    // Look first for extended file attribute "user.frequency" (linux) or "frequency" (macos)
+    char att_buffer[1024] = {0}; // Shouldn't be anywhere near this long
+#ifdef __linux__
+    ssize_t s = getxattr(path,"user.frequency",att_buffer,sizeof(att_buffer) - 1);
+#else
+    ssize_t s = getxattr(path,"frequency",att_buffer,sizeof(att_buffer) - 1,0,0);
+#endif
+    if(s > 0){
+      // Extract from attribute
+      base_freq = strtod(att_buffer,NULL);
+      base_freq /= 1000; // Hz = kilohertz
+      if(Verbose > 1)
+	fprintf(stderr,"Extracted base frequency %lf Hz from attribute\n",base_freq);
+    } else {
+      // Extract from file name
+      char *cp,*cp1;
+      // Should use basename in case directory element has _
+      if((cp = strchr(path,'_')) != NULL && (cp1 = strrchr(path,'_')) != NULL){
+	base_freq = strtod(cp+1,NULL) / 1e6;
+	if(Verbose > 1)
+	  fprintf(stderr,"Extracted base frequency %lf Hz from file name\n",base_freq);
+      }
+    }
+    if(base_freq == 0)
+      fprintf(stderr,"Unknown base frequency for %s\n",path);
+  }
+  struct tm tmp = {0};
+  bool tmp_set = false;
+  {
+    // Look first for extended file attribute "user.unixstarttime" or "unixstarttime"
+    char att_buffer[1024] = {0};
+#ifdef __linux__
+    ssize_t s = getxattr(path,"user.unixstarttime",att_buffer,sizeof(att_buffer) - 1);
+#else
+    ssize_t s = getxattr(path,"unixstarttime",att_buffer,sizeof(att_buffer) - 1,0,0);
+#endif
+    if(s > 0){
+      // Extract from attribute
+      double t = strtod(att_buffer,NULL);
+      time_t tt = t;
+      if(gmtime_r(&tt,&tmp) != NULL){
+	tmp_set = true;
+	if(Verbose > 1)
+	  fprintf(stderr,"Time extracted from attribute\n");
+      }
     }
   }
-  // Extract date-time from file name
-  char *npath = strdup(path);
-  char const *bn = basename(npath);
-  int year,mon,day,hr,minute,sec;
-  char junk;
-  sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
-  free(npath);
+  if(!tmp_set){
+    // that didn't work, try extracting date-time from file name
+      char *npath = strdup(path);
+      char const *bn = basename(npath);
+      int year,mon,day,hr,minute,sec;
+      char junk;
+      int r = sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
+      free(npath);
+      if(r == 7){
+	// Convert to Unix-style struct tm (using its conventions)
+	tmp.tm_year = year - 1900;
+	tmp.tm_mon = mon - 1;
+	tmp.tm_mday = day;
+	tmp.tm_hour = hr;
+	tmp.tm_min = minute;
+	tmp.tm_sec = sec;
+	tmp_set = true;
+	if(Verbose > 1)
+	  fprintf(stderr,"Time extracted from filename\n");
+      }
+  }
+  if(!tmp_set)
+    fprintf(stderr,"%s: recording time unknown\n",path);
 
-  // Convert to Unix-style struct tm (using its conventions)
-  struct tm const tmp = {
-    .tm_year = year - 1900,
-    .tm_mon = mon - 1,
-    .tm_mday = day,
-    .tm_hour = hr,
-    .tm_min = minute,
-    .tm_sec = sec
-  };
   // Do the actual decoding.
   process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp);
   free(signal); // allocated by load_wav
