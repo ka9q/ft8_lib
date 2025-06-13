@@ -523,9 +523,9 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     if(s > 0){
       // Extract from attribute
       base_freq = strtod(att_buffer,NULL);
-      base_freq /= 1000; // Hz = kilohertz
+      base_freq /= 1e6; // Hz -> MHz
       if(Verbose > 1)
-	fprintf(stderr,"Extracted base frequency %lf Hz from attribute\n",base_freq);
+	fprintf(stderr,"Extracted base frequency %lf MHz from attribute\n",base_freq);
     } else {
       // Extract from file name
       char *cp,*cp1;
@@ -533,12 +533,13 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       if((cp = strchr(path,'_')) != NULL && (cp1 = strrchr(path,'_')) != NULL){
 	base_freq = strtod(cp+1,NULL) / 1e6;
 	if(Verbose > 1)
-	  fprintf(stderr,"Extracted base frequency %lf Hz from file name\n",base_freq);
+	  fprintf(stderr,"Extracted base frequency %lf MHz from file name\n",base_freq);
       }
     }
-    if(base_freq == 0)
-      fprintf(stderr,"Unknown base frequency for %s\n",path);
   }
+  if(base_freq == 0)
+    fprintf(stderr,"Unknown base frequency for %s\n",path);
+
   struct tm tmp = {0};
   bool tmp_set = false;
   {
