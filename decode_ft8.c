@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <libgen.h>
+#include <assert.h>
 
 #include "ft8/decode.h"
 #include "ft8/constants.h"
@@ -240,14 +241,15 @@ int mcompare(void const *a, void const *b){
 }
 
 // Process a buffer already loaded from a file
-// 'path' is passed only to extract date & time, the file is actually read in main()
-int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp){
+// Pass precise time of signal[0] (including fractional second) so we can reference to it
+int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double sec){
+  assert(signal != NULL && tmp != NULL);
 
   LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
 
   // Compute FFT over the whole signal and store it
   monitor_t mon = {0};
-  monitor_config_t mon_cfg = {
+  monitor_config_t const mon_cfg = {
     .f_min = 100,
     .f_max = sample_rate/2 - 500, // allow room for the receiver filter rolloff
     .sample_rate = sample_rate,
@@ -260,7 +262,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   for (int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
     {
       // Process the waveform data frame by frame - you could have a live loop here with data from an audio device
-      // (cool, but we'd have to get the decoding time from something other than the file name -- KA9Q)
+      // (cool, now that we can get sample timings - KA9Q)
       monitor_process(&mon, signal + frame_pos);
     }
   LOG(LOG_DEBUG, "Waterfall accumulated %d symbols\n", mon.wf.num_blocks);
@@ -285,11 +287,11 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
       if (cand->score < kMin_score)
 	continue;
 
-      float freq_hz = (cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
-      float time_sec = (cand->time_offset + (float)cand->time_sub / mon.wf.time_osr) * mon.symbol_period;
+      float const freq_hz = (cand->freq_offset + (float)cand->freq_sub / mon.wf.freq_osr) / mon.symbol_period;
+      float const time_sec = (cand->time_offset + (float)cand->time_sub / mon.wf.time_osr) * mon.symbol_period;
 
-      message_t message;
-      decode_status_t status;
+      message_t message = {0}; // Written by ft8_decode()
+      decode_status_t status = {0}; // ditto
       if (!ft8_decode(&mon.wf, cand, &message, kLDPC_iterations, &status))
         {
 	  // printf("000000 %3d %+4.2f %4.0f ~  ---\n", cand->score, time_sec, freq_hz);
@@ -309,7 +311,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
         }
 
       message.freq_hz = freq_hz; // Save so we can sort on it and display it
-      message.time_sec = time_sec;
+      message.time_sec = time_sec; // Time offset of start from nominal UTC :00/:15/:30/:45 or :00/:07.5/:15/...
       message.score = cand->score;
 
       LOG(LOG_DEBUG, "Checking hash table for %4.1fs / %4.1fHz [%d]...\n", time_sec, freq_hz, cand->score);
@@ -346,30 +348,32 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
         }
     }
   LOG(LOG_INFO, "Decoded %d messages\n", num_decoded);
-  // Sort entire hash table, including null entries
+  // Decoded messages are spread throughout hash table, so sort the whole thing including null entries
   qsort(decoded_hashtable, kMax_decoded_messages, sizeof *decoded_hashtable, mcompare);
-  // Pointers to valid messages now in first num_decoded elements of decoded_hashtable
+  // Empty entries sorted to top, so first num_decoded elements of decoded_hashtable are valid
+  double tbase = tmp->tm_sec + sec; // Full seconds and fraction in minute
+  tbase = is_ft8 ? fmod(tbase,15.0) : fmod(tbase,7.5); // seconds after start of cycle (0/15/30/45 or 0/7.5/15/etc)
+
   for(int i=0; i < num_decoded; i++){
-    message_t *mp = decoded_hashtable[i];
+    message_t const *mp = decoded_hashtable[i];
     if(mp == NULL)
       continue; // Shouldn't happen
 
-    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2f %'.1lf ~ %s\n",
-		  tmp->tm_year + 1900,
-		  tmp->tm_mon + 1,
-		  tmp->tm_mday,
-		  tmp->tm_hour,
-		  tmp->tm_min,
-		  tmp->tm_sec,
-		  mp->score,
-		  mp->time_sec,
-		  1.0e6 * base_freq + mp->freq_hz,
-		  mp->text);
-
+    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2lf %'.1lf ~ %s\n",
+	    tmp->tm_year + 1900,
+	    tmp->tm_mon + 1,
+	    tmp->tm_mday,
+	    tmp->tm_hour,
+	    tmp->tm_min,
+	    tmp->tm_sec,
+	    mp->score,
+	    tbase + mp->time_sec,
+	    1.0e6 * base_freq + mp->freq_hz,
+	    mp->text);
   }
   free(decoded);
   free(decoded_hashtable);
 
   monitor_free(&mon);
-  return 0;
+  return 0; // Caller frees signal
 }

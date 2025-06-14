@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <math.h>
 #include <time.h>
 #include <unistd.h>
 #include <locale.h>
@@ -35,6 +36,14 @@
 #include "common/debug.h"
 
 #define LOG_LEVEL LOG_FATAL
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+  // The great thing about standards...
+  #define st_mtim st_mtimespec
+  #define st_atim st_atimespec
+  #define st_ctim st_ctimespec
+#endif
+
 
 int Verbose = 0;
 bool NoDelete; // Don't delete input file after decoding
@@ -249,6 +258,8 @@ int main(int argc, char *argv[]){
 	    // New directory appeared; add it to the list
 	    add_watches_recursive(fd, fullname);
 	  }
+	  break;
+	default: // Ignore symbolic links and everything else
 	  break;
 	}
 	free(fullname);
@@ -543,6 +554,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     fprintf(stderr,"Unknown base frequency for %s\n",path);
 
   struct tm tmp = {0};
+  double fsec = 0; // Fractional second
   bool tmp_set = false;
   {
     // Look first for extended file attribute "user.unixstarttime" or "unixstarttime"
@@ -556,6 +568,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       // Extract from attribute
       double t = strtod(att_buffer,NULL);
       time_t tt = t;
+      fsec = fmod(t,1.0);
       if(gmtime_r(&tt,&tmp) != NULL){
 	tmp_set = true;
 	if(Verbose > 1)
@@ -579,16 +592,47 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	tmp.tm_hour = hr;
 	tmp.tm_min = minute;
 	tmp.tm_sec = sec;
+	// fsec remains at zero
 	tmp_set = true;
 	if(Verbose > 1)
 	  fprintf(stderr,"Time extracted from filename\n");
       }
   }
+  if(!tmp_set){
+    // That didn't work either, so subtract 7.5 or 15 sec from the modification time
+    // not really tested, but seems simple enough
+    struct stat statbuf = {0};
+    if(lstat(path,&statbuf) == 0){
+      struct timespec ts = {0};
+      ts.tv_sec = statbuf.st_mtim.tv_sec;
+      ts.tv_nsec = statbuf.st_mtim.tv_nsec;
+      if(is_ft8){
+	// 15 sec for FT8
+	ts.tv_sec -= 15;
+      } else {
+	// 7.5 sec for FT4
+	ts.tv_sec -= 7;
+	ts.tv_nsec -= 500000000; // 1/2 sec
+	if(ts.tv_nsec < 0){
+	  ts.tv_nsec += 1000000000; // 1 sec
+	  ts.tv_sec--;
+	}
+      }
+      time_t tt = ts.tv_sec;
+      fsec = ts.tv_nsec * 1.0e-9; // nanosec to fractional second
+      if(gmtime_r(&tt,&tmp) != NULL){
+	tmp_set = true;
+	fprintf(stderr,"Time inferred from file mod time\n");
+      }
+    }
+  }
+
   if(!tmp_set)
     fprintf(stderr,"%s: recording time unknown\n",path);
 
   // Do the actual decoding.
-  process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp);
+  // Should pass sub-second timing to help the decoder produce a more accurate timing offset
+  process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp,fsec);
   free(signal); // allocated by load_wav
   signal = NULL;
   fflush(stdout);

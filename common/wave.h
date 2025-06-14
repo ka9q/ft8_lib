@@ -16,7 +16,10 @@ extern "C"
   // Now mallocs signal array, places in *signal, caller must free
   int load_wav(float** signal, int* num_samples, int* sample_rate, const char* path,int fd);
 
-  int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp);
+  // base_freq = radio frequency in Hz corresponding to zero frequency here (receiver is always USB)
+  // tmp = UTC @ signal[0]
+  // fsec = fractional second in UTC @ signal[0]
+  int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double fsec);
 
 #ifdef __cplusplus
 }
