@@ -145,7 +145,7 @@ int main(int argc, char *argv[]){
     struct timespec now;
     clock_gettime(CLOCK_REALTIME,&now);
     if(now.tv_sec >= last_poll.tv_sec + poll_interval){
-      poll_interval = random() & 31; // 0-31 inclusive
+      poll_interval = 1 + (random() & 31); // 1-32 seconds inclusive
       process_directory(path, is_ft8, base_freq);
       last_poll = now;
       if(Run_queue)
@@ -156,7 +156,7 @@ int main(int argc, char *argv[]){
       .fd = fd,
       .events = POLLIN,
     };
-    int timeout = 1000;
+    int timeout = 1000; // wait max 1 sec
 
     int r = poll(&pd,1,timeout);
     if(r < 0) {
@@ -219,14 +219,14 @@ int main(int argc, char *argv[]){
 	}
 	// Construct full pathname and process
 	char *fullname = NULL;
-	int r = asprintf(&fullname,"%s/%s",dirname, event->name);
+	int r = asprintf(&fullname,"%s/%s",dirname, event->name); // mallocs memory for fullname
 	if(r <= 0){
 	  fprintf(stderr,"asprintf %s/%s failed\n",dirname, event->name);
 	  free(fullname);
 	  continue;
 	}
 	// Use lstat so we'll ignore symbolic links
-	struct stat statbuf;
+	struct stat statbuf = {0};
 	if(lstat(fullname,&statbuf) != 0){
 	  free(fullname);
 	  continue;
@@ -239,7 +239,7 @@ int main(int argc, char *argv[]){
 	    // We also monitor IN_CLOSE_WRITE in case a .wav file is written directly, without renaming
 	    // Add to list for sorting
 	    if(filecount < SORT_SIZE)
-	      file_list[filecount++] = strdup(fullname);
+	      file_list[filecount++] = strdup(fullname); // mallocs memory, freed after sort and process
 	    else
 	      process_file(fullname, is_ft8, base_freq); // sort table is full (unlikely) so just process it
 	  }
@@ -272,12 +272,12 @@ int main(int argc, char *argv[]){
 #else
   // Simple timed directory scan without inotify
   while(true){
-    // Re-scan the directory every 5 seconds
+    // Re-scan the directory every 1-8 seconds
     // Will happen on the first loop since last_poll is in the distant past
     process_directory(path, is_ft8, base_freq);
     if(Run_queue)
       break;
-    sleep(random() & 7); // Random sleep between 0 and 7 sec; prevent synchronizing of multiple workers
+    sleep(1 + (random() & 7)); // Random sleep between 1 and 8 sec; prevent synchronizing of multiple workers
   }
 #endif
   exit(0);
@@ -413,15 +413,17 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     }
     close(lock_fd);
     lock_fd = -1;
-    // Send it a kill -0 to see if it still exists
-    if(kill(pid,0) == 0)
-      return 1; // Locking process still exists
+    // Send it a no-op kill -0 to see if it still exists
+    // If it does, kill will return 0 if we own it, or -1 and errno == EPERM if it exists and owned by someone else
+    if(kill(pid,0) == 0 || errno == EPERM)
+      return 1;
 
-    if(errno != ESRCH){
-      fprintf(stderr,"locking process %d exists but we can't send it a kill 0: %s\n",pid,strerror(errno));
+    if(errno != ESRCH){ // Only ESRCH indicates the process doesn't exist
+      fprintf(stderr,"error sending 'kill -0' to process %d: %s\n",pid,strerror(errno));
       return 1;
     }
     // Locking process no longer exists, remove the lock and try again
+    // If two processes race to do this, the unlink will succeed only for one
     if(unlink(lockfile) != 0){
       fprintf(stderr,"Attempt to unlink stale lockfile %s failed: %s\n",lockfile,strerror(errno));
       return 1;
