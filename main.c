@@ -569,6 +569,11 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       double t = strtod(att_buffer,NULL);
       time_t tt = t;
       fsec = fmod(t,1.0);
+      if(round(t) != floor(t)){
+	// Round up to nearest second, otherwise round down
+	tt++;
+	fsec -= 1.0;
+      }
       if(gmtime_r(&tt,&tmp) != NULL){
 	tmp_set = true;
 	if(Verbose > 1)
@@ -592,7 +597,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	tmp.tm_hour = hr;
 	tmp.tm_min = minute;
 	tmp.tm_sec = sec;
-	// fsec remains at zero
+	fsec = 0; // Not available
 	tmp_set = true;
 	if(Verbose > 1)
 	  fprintf(stderr,"Time extracted from filename\n");
@@ -603,9 +608,10 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     // not really tested, but seems simple enough
     struct stat statbuf = {0};
     if(lstat(path,&statbuf) == 0){
-      struct timespec ts = {0};
-      ts.tv_sec = statbuf.st_mtim.tv_sec;
-      ts.tv_nsec = statbuf.st_mtim.tv_nsec;
+      struct timespec ts = {
+	.tv_sec = statbuf.st_mtim.tv_sec,
+	.tv_nsec = statbuf.st_mtim.tv_nsec,
+      };
       if(is_ft8){
 	// 15 sec for FT8
 	ts.tv_sec -= 15;
@@ -620,6 +626,11 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       }
       time_t tt = ts.tv_sec;
       fsec = ts.tv_nsec * 1.0e-9; // nanosec to fractional second
+      if(ts.tv_nsec > 500000000){
+	// Round up
+	tt++;
+	fsec -= 1.0;
+      }
       if(gmtime_r(&tt,&tmp) != NULL){
 	tmp_set = true;
 	fprintf(stderr,"Time inferred from file mod time\n");
@@ -631,7 +642,6 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     fprintf(stderr,"%s: recording time unknown\n",path);
 
   // Do the actual decoding.
-  // Should pass sub-second timing to help the decoder produce a more accurate timing offset
   process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp,fsec);
   free(signal); // allocated by load_wav
   signal = NULL;
