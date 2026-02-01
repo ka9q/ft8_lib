@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <math.h>
+#include <string.h>
 
 /// Compute log likelihood log(p(1) / p(0)) of 174 message bits for later use in soft-decision LDPC decoding
 /// @param[in] wf Waterfall data collected during message slot
@@ -41,9 +42,9 @@ static int get_index(const waterfall_t* wf, const candidate_t* candidate)
     return offset;
 }
 
-static int ft8_sync_score(const waterfall_t* wf, const candidate_t* candidate)
+static float ft8_sync_score(const waterfall_t* wf, const candidate_t* candidate)
 {
-    int score = 0;
+    float score = 0;
     int num_average = 0;
 
     // Get the pointer to symbol 0 of the candidate
@@ -107,9 +108,9 @@ static int ft8_sync_score(const waterfall_t* wf, const candidate_t* candidate)
     return score;
 }
 
-static int ft4_sync_score(const waterfall_t* wf, const candidate_t* candidate)
+static float ft4_sync_score(const waterfall_t* wf, const candidate_t* candidate)
 {
-    int score = 0;
+    float score = 0;
     int num_average = 0;
 
     // Get the pointer to symbol 0 of the candidate
@@ -175,48 +176,91 @@ int ft8_find_sync(const waterfall_t* wf, int num_candidates, candidate_t heap[],
     int heap_size = 0;
     candidate_t candidate;
 
-    // Here we allow time offsets that exceed signal boundaries, as long as we still have all data bits.
-    // I.e. we can afford to skip the first 7 or the last 7 Costas symbols, as long as we track how many
-    // sync symbols we included in the score, so the score is averaged.
-    for (candidate.time_sub = 0; candidate.time_sub < wf->time_osr; ++candidate.time_sub)
-    {
-        for (candidate.freq_sub = 0; candidate.freq_sub < wf->freq_osr; ++candidate.freq_sub)
-        {
-            for (candidate.time_offset = -12; candidate.time_offset < 24; ++candidate.time_offset)
-            {
-                for (candidate.freq_offset = 0; (candidate.freq_offset + 7) < wf->num_bins; ++candidate.freq_offset)
-                {
-                    if (wf->protocol == PROTO_FT4)
-                    {
-                        candidate.score = ft4_sync_score(wf, &candidate);
-                    }
-                    else
-                    {
-                        candidate.score = ft8_sync_score(wf, &candidate);
-                    }
-
-                    if (candidate.score < min_score)
-                        continue;
-
-                    // If the heap is full AND the current candidate is better than
-                    // the worst in the heap, we remove the worst and make space
-                    if (heap_size == num_candidates && candidate.score > heap[0].score)
-                    {
-                        heap[0] = heap[heap_size - 1];
-                        --heap_size;
-                        heapify_down(heap, heap_size);
-                    }
-
-                    // If there's free space in the heap, we add the current candidate
-                    if (heap_size < num_candidates)
-                    {
-                        heap[heap_size] = candidate;
-                        ++heap_size;
-                        heapify_up(heap, heap_size);
-                    }
-                }
+    int time_size = wf->time_osr * (24 + 12);
+    int freq_size = wf->freq_osr * (wf->num_bins - 7);
+    float max_score = 1;
+  
+    // Here we allow time offsets that exceed signal boundaries, as long as we
+    // still have all data bits. I.e. we can afford to skip the first 7 or the
+    // last 7 Costas symbols, as long as we track how many sync symbols we
+    // included in the score, so the score is averaged.
+  
+    // We want to find the best time offset in each sliding 0.5 second window, and
+    // then add it as a candidate if it's better than the worst in the heap.
+    const int half_time_osr = (wf->time_osr + 1) / 2;
+  
+    for (candidate.freq_offset = 0;
+            (candidate.freq_offset + 7) < wf->num_bins;
+            ++candidate.freq_offset) {
+      for (candidate.freq_sub = 0; candidate.freq_sub < wf->freq_osr; ++candidate.freq_sub) {
+        // we ignore the first and last symbols so that we don't have to worry about
+        // going over the bounds in the search below.
+        for (candidate.time_offset = -11; candidate.time_offset < 23;
+            ++candidate.time_offset) {
+          // We go around this loop twice to see if there is any hope of a transmission
+          for (candidate.time_sub = 0; candidate.time_sub < wf->time_osr;
+              candidate.time_sub += half_time_osr) {
+  
+            float candidate_score;
+            if (wf->protocol == PROTO_FT4) {
+              candidate_score = ft4_sync_score(wf, &candidate);
+            } else {
+              candidate_score = ft8_sync_score(wf, &candidate);
             }
+  
+            candidate.score = (int)candidate_score;
+
+	    if (candidate.score < min_score)
+		continue;
+
+            if (candidate_score - min_score > max_score)
+              max_score = candidate_score - min_score;
+  
+            // We now have a potential candidate which passes the bar. Now we 
+            // search for the best candidate within one symbol period backwards and
+            // forwards in time. The code is slightly nastier since the candidate time_sub
+            // field is unsigned.
+            candidate_t search_candidate = candidate;
+            candidate_t best_candidate = candidate;
+            search_candidate.time_offset--;
+            search_candidate.time_sub += 1;
+            for (int time_osr_offset = -wf->time_osr; 
+                 time_osr_offset < wf->time_osr; 
+                 ++time_osr_offset, ++search_candidate.time_sub) {
+              if (wf->protocol == PROTO_FT4) {
+                candidate_score = ft4_sync_score(wf, &search_candidate);
+              } else {
+                candidate_score = ft8_sync_score(wf, &search_candidate);
+              }
+  
+              if (candidate_score - min_score > max_score)
+                max_score = candidate_score - min_score;
+  
+              search_candidate.score = (int)candidate_score;
+              if (candidate_score > best_candidate.score) {
+                best_candidate = search_candidate;
+              }
+            }
+  
+	    // If the heap is full AND the current candidate is better than
+	    // the worst in the heap, we remove the worst and make space
+            if (heap_size == num_candidates && best_candidate.score > heap[0].score) {
+              heap[0] = heap[heap_size - 1];
+              --heap_size;
+              heapify_down(heap, heap_size);
+            }
+ 
+            // If there's free space in the heap, we add the current candidate
+            if (heap_size < num_candidates) {
+              heap[heap_size] = best_candidate;
+              ++heap_size;
+              heapify_up(heap, heap_size);
+            }
+            candidate.time_offset += 2;  // Skip the next 2 time offsets, so we don't get duplicates
+            break;  // Dealt with this offset.
+          }
         }
+      }
     }
 
     // Sort the candidates by sync strength - here we benefit from the heap structure
@@ -362,6 +406,7 @@ bool ft8_decode(const waterfall_t* wf, const candidate_t* cand, message_t* messa
         }
     }
 
+    memcpy(message->bits, a91, sizeof(message->bits));
     status->unpack_status = unpack77(a91, message->text);
 
     if (status->unpack_status < 0)

@@ -46,6 +46,7 @@ extern "C"
         // TODO: check again that this size is enough
         char text[25]; ///< Plain text
         uint16_t hash; ///< Hash value to be used in hash table and quick checking for duplicates
+        uint8_t bits[10];   ///< The 77 bits of the message
       // Store so we can display them after sorting
       float freq_hz;   // We will sort on this
       float time_sec;
