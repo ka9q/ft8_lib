@@ -9,9 +9,9 @@
 #include "ft8/encode.h"
 #include "ft8/constants.h"
 
-#include "fft/kiss_fftr.h"
 #include "common/common.h"
 #include "common/debug.h"
+#include <fftw3.h>
 
 #define LOG_LEVEL LOG_INFO
 
@@ -95,65 +95,60 @@ void test2() {
 
 
 void test3() {
-    uint8_t test_in2[10] = { 0x11, 0x00, 0x00, 0x00, 0x00, 0x0E, 0x10, 0x04, 0x01, 0x00 };
-    uint16_t crc1 = ftx_compute_crc(test_in2, 76);  // Calculate CRC of 76 bits only
-    LOG(LOG_INFO, "CRC: %04x\n", crc1);            // should be 0x0708
+    uint8_t test_in2[10] = { 0x11, 0x00, 0x00, 0x00, 0x00, 0x0E, 0x10, 0x04,
+0x01, 0x00 }; uint16_t crc1 = ftx_compute_crc(test_in2, 76);  // Calculate CRC
+of 76 bits only LOG(LOG_INFO, "CRC: %04x\n", crc1);            // should be
+0x0708
 }
 */
 
-void test_tones(float* log174)
-{
-    // Just a test case
-    for (int i = 0; i < FT8_ND; ++i)
-    {
-        const uint8_t inv_map[8] = { 0, 1, 3, 2, 6, 4, 5, 7 };
-        uint8_t tone = ("0000000011721762454112705354533170166234757420515470163426"[i]) - '0';
-        uint8_t b3 = inv_map[tone];
-        log174[3 * i] = (b3 & 4) ? +1.0 : -1.0;
-        log174[3 * i + 1] = (b3 & 2) ? +1.0 : -1.0;
-        log174[3 * i + 2] = (b3 & 1) ? +1.0 : -1.0;
-    }
+void test_tones(float *log174) {
+  // Just a test case
+  for (int i = 0; i < FT8_ND; ++i) {
+    const uint8_t inv_map[8] = {0, 1, 3, 2, 6, 4, 5, 7};
+    uint8_t tone =
+        ("0000000011721762454112705354533170166234757420515470163426"[i]) - '0';
+    uint8_t b3 = inv_map[tone];
+    log174[3 * i] = (b3 & 4) ? +1.0 : -1.0;
+    log174[3 * i + 1] = (b3 & 2) ? +1.0 : -1.0;
+    log174[3 * i + 2] = (b3 & 1) ? +1.0 : -1.0;
+  }
 }
 
-void test4()
-{
-    const int nfft = 128;
-    const float fft_norm = 2.0 / nfft;
+void test4() {
+  const int nfft = 128;
+  const float fft_norm = 2.0 / nfft;
 
-    size_t fft_work_size;
-    kiss_fftr_alloc(nfft, 0, 0, &fft_work_size);
+  fftwf_plan fft_plan;
+  float *fft_in = (float *)fftwf_malloc(sizeof(float) * nfft);
+  fftwf_complex *fft_out =
+      (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * (nfft / 2 + 1));
+  fft_plan = fftwf_plan_dft_r2c_1d(nfft, fft_in, fft_out, FFTW_ESTIMATE);
 
-    printf("N_FFT = %d\n", nfft);
-    printf("FFT work area = %lu\n", fft_work_size);
+  for (int i = 0; i < nfft; ++i) {
+    fft_in[i] = sinf(i * 2 * (float)M_PI / nfft);
+  }
 
-    void* fft_work = malloc(fft_work_size);
-    kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(nfft, 0, fft_work, &fft_work_size);
+  fftwf_execute(fft_plan);
 
-    kiss_fft_scalar window[nfft];
-    for (int i = 0; i < nfft; ++i)
-    {
-        window[i] = sinf(i * 2 * (float)M_PI / nfft);
-    }
+  float mag_db[nfft];
+  // Compute log magnitude in decibels
+  for (int j = 0; j < nfft / 2 + 1; ++j) {
+    float mag2 =
+        (fft_out[j][0] * fft_out[j][0] + fft_out[j][1] * fft_out[j][1]);
+    mag_db[j] = 10.0f * log10f(1E-10f + mag2 * fft_norm * fft_norm);
+  }
+  fftwf_destroy_plan(fft_plan);
+  fftwf_free(fft_in);
+  fftwf_free(fft_out);
 
-    kiss_fft_cpx freqdata[nfft / 2 + 1];
-    kiss_fftr(fft_cfg, window, freqdata);
-
-    float mag_db[nfft];
-    // Compute log magnitude in decibels
-    for (int j = 0; j < nfft / 2 + 1; ++j)
-    {
-        float mag2 = (freqdata[j].i * freqdata[j].i + freqdata[j].r * freqdata[j].r);
-        mag_db[j] = 10.0f * log10f(1E-10f + mag2 * fft_norm * fft_norm);
-    }
-
-    printf("F[0] = %.1f dB\n", mag_db[0]);
-    printf("F[1] = %.3f dB\n", mag_db[1]);
+  printf("F[0] = %.1f dB\n", mag_db[0]);
+  printf("F[1] = %.3f dB\n", mag_db[1]);
 }
 
-int main()
-{
-    //test1();
-    test4();
+int main() {
+  // test1();
+  test4();
 
-    return 0;
+  return 0;
 }

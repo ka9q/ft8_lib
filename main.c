@@ -44,6 +44,9 @@
   #define st_ctim st_ctimespec
 #endif
 
+extern int kTime_osr;
+extern int kFreq_osr;
+
 
 int Verbose = 0;
 bool NoDelete; // Don't delete input file after decoding
@@ -66,6 +69,7 @@ void usage();
 int main(int argc, char *argv[]){
   const char* path = NULL;
   bool is_ft8 = true;
+  kTime_osr = 16;
 
   // Base freq; if not specified with -f in megahertz, extracted from input filename of form
   // yyyymmddThhmmssZ_ffffffff_usb.wav
@@ -73,8 +77,9 @@ int main(int argc, char *argv[]){
   // hhmmss is hour, minute, second UTC
   // ffffffffff is frequency in *hertz*
   double base_freq = 0;
+  int nprocs = 1;
   int c;
-  while((c = getopt(argc,argv,"48f:vnr")) != -1){
+  while((c = getopt(argc,argv,"48f:vnrT:F:p:")) != -1){
     switch(c){
     case 'r':
       Run_queue = true;
@@ -87,12 +92,23 @@ int main(int argc, char *argv[]){
       break;
     case '8':
       is_ft8 = true; // In case it's not the default
+      kTime_osr = 16;
       break;
     case '4': // Decode FT4; default is FT8
       is_ft8 = false;
+      kTime_osr = 5;
       break;
     case 'f': // Base frequency in Megahertz, otherwise extracted from file name
       base_freq = strtod(optarg,NULL);
+      break;
+    case 'F':
+      kFreq_osr = atoi(optarg);
+      break;
+    case 'T':
+      kTime_osr = atoi(optarg);
+      break;
+    case 'p':
+      nprocs = atoi(optarg);
       break;
     }
   }
@@ -122,6 +138,17 @@ int main(int argc, char *argv[]){
       exit(1);
     }
   }
+  while (nprocs-- > 1) {
+    int pid = fork();
+    if (pid < 0) {
+      fprintf(stderr,"Failed to fork: %s\n", strerror(errno));
+      exit(1);
+    }
+    if (pid == 0) {
+      break;
+    }
+  }
+  
 #ifdef __linux__ // inotify is linux-only; non-linux will run simple timer-based directory scan below
   extern int Watches;
 
@@ -522,6 +549,8 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
       }
     }
+    free(signal);   // Must free the signal buffer
+    // signal = NULL;
     return -1;
   }
   if(base_freq == 0){
@@ -762,5 +791,5 @@ done:;
 
 void usage()
 {
-  fprintf(stderr, "decode_ft8 [-v] [-8|-4] [-d] [-f basefreq] file_or_directory\n");
+  fprintf(stderr, "decode_ft8 [-F sub] [-T sub] [-p nprocs] [-v] [-8|-4] [-d] [-f basefreq] file_or_directory\n");
 }
