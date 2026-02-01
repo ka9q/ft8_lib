@@ -443,7 +443,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   qsort(decoded_hashtable, kMax_decoded_messages, sizeof *decoded_hashtable, mcompare);
   // Empty entries sorted to top, so first num_decoded elements of decoded_hashtable are valid
   double tbase = tmp->tm_sec; // Full seconds and fraction in minute, should be just above (not below) period multiple
-  tbase = is_ft8 ? fmod(tbase,15.0) : fmod(tbase,7.5); // seconds after start of cycle (0/15/30/45 or 0/7.5/15/etc)
+  tbase = is_ft8 ? fmod(tbase,15.0) : fmod(tbase+1,7.5)-1; // seconds after start of cycle (0/15/30/45 or 0/7.5/15/etc)
   tbase += sec; // sec could be negative, so add it only now
 
   for(int i=0; i < num_decoded; i++){
