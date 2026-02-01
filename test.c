@@ -9,9 +9,9 @@
 #include "ft8/encode.h"
 #include "ft8/constants.h"
 
-#include "fft/kiss_fftr.h"
 #include "common/common.h"
 #include "common/debug.h"
+#include <fftw3.h>
 
 #define LOG_LEVEL LOG_INFO
 
@@ -115,39 +115,35 @@ void test_tones(float* log174)
     }
 }
 
-void test4()
-{
-    const int nfft = 128;
-    const float fft_norm = 2.0 / nfft;
+void test4() {
+  const int nfft = 128;
+  const float fft_norm = 2.0 / nfft;
 
-    size_t fft_work_size;
-    kiss_fftr_alloc(nfft, 0, 0, &fft_work_size);
+  fftwf_plan fft_plan;
+  float *fft_in = (float *)fftwf_malloc(sizeof(float) * nfft);
+  fftwf_complex *fft_out =
+      (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * (nfft / 2 + 1));
+  fft_plan = fftwf_plan_dft_r2c_1d(nfft, fft_in, fft_out, FFTW_ESTIMATE);
 
-    printf("N_FFT = %d\n", nfft);
-    printf("FFT work area = %lu\n", fft_work_size);
+  for (int i = 0; i < nfft; ++i) {
+    fft_in[i] = sinf(i * 2 * (float)M_PI / nfft);
+  }
 
-    void* fft_work = malloc(fft_work_size);
-    kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(nfft, 0, fft_work, &fft_work_size);
+  fftwf_execute(fft_plan);
 
-    kiss_fft_scalar window[nfft];
-    for (int i = 0; i < nfft; ++i)
-    {
-        window[i] = sinf(i * 2 * (float)M_PI / nfft);
-    }
+  float mag_db[nfft];
+  // Compute log magnitude in decibels
+  for (int j = 0; j < nfft / 2 + 1; ++j) {
+    float mag2 =
+        (fft_out[j][0] * fft_out[j][0] + fft_out[j][1] * fft_out[j][1]);
+    mag_db[j] = 10.0f * log10f(1E-10f + mag2 * fft_norm * fft_norm);
+  }
+  fftwf_destroy_plan(fft_plan);
+  fftwf_free(fft_in);
+  fftwf_free(fft_out);
 
-    kiss_fft_cpx freqdata[nfft / 2 + 1];
-    kiss_fftr(fft_cfg, window, freqdata);
-
-    float mag_db[nfft];
-    // Compute log magnitude in decibels
-    for (int j = 0; j < nfft / 2 + 1; ++j)
-    {
-        float mag2 = (freqdata[j].i * freqdata[j].i + freqdata[j].r * freqdata[j].r);
-        mag_db[j] = 10.0f * log10f(1E-10f + mag2 * fft_norm * fft_norm);
-    }
-
-    printf("F[0] = %.1f dB\n", mag_db[0]);
-    printf("F[1] = %.3f dB\n", mag_db[1]);
+  printf("F[0] = %.1f dB\n", mag_db[0]);
+  printf("F[1] = %.3f dB\n", mag_db[1]);
 }
 
 int main()
