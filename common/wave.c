@@ -75,8 +75,8 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
 // Rewritten 4 May 2025 KA9Q to be more tolerant of variant headers
 // Expects to be called with the file already open for reading on fd. path used only for error messages
-int load_wav(float **signal, int* num_samples, int* sample_rate, const char* path,int fd){
-  if(signal == NULL || num_samples == NULL || sample_rate == NULL || path == NULL)
+int load_wav(float **signal, int* num_frames, int *num_channels, int* sample_rate, const char* path,int fd){
+  if(signal == NULL || num_frames == NULL || num_channels == NULL || sample_rate == NULL || path == NULL)
     return -1;
 
   FILE *f = fdopen(fd, "rb");
@@ -132,6 +132,7 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
 	goto quit;
       if(fread((void*)&numChannels, sizeof(numChannels), 1, f) != 1)
 	goto quit;
+      *num_channels = numChannels;
       if(fread((void*)&sampleRate, sizeof(sampleRate), 1, f) != 1)
 	goto quit;
       if(fread((void*)&byteRate, sizeof(byteRate), 1, f) != 1)
@@ -155,14 +156,15 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
     } else if(strncmp(chunkID,"data",4) == 0){
       // Process data
       if(chunkSize != 0xffffffff) // typical placeholder for "indeterminate"
-	*num_samples = chunkSize / blockAlign;
+	*num_frames = chunkSize / blockAlign;
       else
-	*num_samples = 10000000; // wing it: 10 million = 15 sec * 667 kHz
+	*num_frames = 10000000; // wing it: 10 million = 15 sec * 667 kHz
 
       *sample_rate = sampleRate;
-      if(*signal == NULL) // What if it's not null? We don't know what it is, should it be freed?
-	*signal = malloc(sizeof(float) * numChannels * *num_samples);
-
+      if(*signal == NULL){ // What if it's not null? We don't know what it is, should it be freed?
+	size_t nbytes = sizeof(float) * numChannels * *num_frames;
+	*signal = malloc(nbytes);
+      }
       switch(audioFormat){
       case 1: // 16-bit signed int
 	{
@@ -171,17 +173,17 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
 	    goto quit;
 	  }
 	  int count;
-	  for(count = 0; count < *num_samples; count++){ // numChannels must be 1
+	  for(count = 0; count < *num_frames * numChannels; count++){ // numChannels must be 1
 	    int16_t s;
 	    if(fread(&s,sizeof s, 1, f) != 1)
 	      break;
 
 	    (*signal)[count] = s / 32768.0f; // compiler should optimize
 	  }
-	  if(count != *num_samples){
+	  if(count != *num_frames * numChannels){
 	    // Trim buffer and return the actual count
-	    *signal = reallocf(*signal,sizeof(float) * numChannels * count);
-	    *num_samples = count;
+	    *signal = reallocf(*signal,sizeof(float) * count);
+	    *num_frames = count / numChannels;
 	  }
 	}
 	break;
@@ -191,11 +193,15 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
 	    fprintf(stderr,"%s: bits per sample %d for float; must be 32\n",path,bitsPerSample);
 	    goto quit;
 	  }
-	  int const count = fread(*signal,blockAlign,*num_samples, f); // Read floating point directly
-	  if(count != *num_samples){
+	  if(blockAlign != numChannels * sizeof(float)){
+	    fprintf(stderr,"%s: unexpected blockAlign %u for float WAV file\n",path,blockAlign);
+	    goto quit;
+	  }
+	  int const count = fread(*signal,blockAlign,*num_frames, f); // Read floating point directly
+	  if(count != *num_frames){
 	    // Trim buffer and return the actual count
-	    *signal = reallocf(*signal,sizeof(float) * numChannels * count);
-	    *num_samples = count;
+	    *signal = reallocf(*signal,blockAlign * count);
+	    *num_frames = count;
 	  }
 	}
 	break;
@@ -206,8 +212,8 @@ int load_wav(float **signal, int* num_samples, int* sample_rate, const char* pat
       // If we haven't read all the data in the file, skip over the rest of the chunk
       // There will probably not be another chunk, but this will force the eof when we loop back to
       // read another chunk
-      if(chunkSize / blockAlign > *num_samples){
-	long extra = chunkSize - *num_samples * blockAlign;
+      if(chunkSize / blockAlign > *num_frames){
+	long extra = chunkSize - *num_frames * blockAlign;
 	fseek(f,extra,SEEK_CUR);
       }
     } else {

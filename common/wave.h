@@ -14,7 +14,7 @@ extern "C"
 
   // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
   // Now mallocs signal array, places in *signal, caller must free
-  int load_wav(float** signal, int* num_samples, int* sample_rate, const char* path,int fd);
+  int load_wav(float** signal, int* num_samples, int *num_channels, int* sample_rate, const char* path,int fd);
 
   // base_freq = radio frequency in Hz corresponding to zero frequency here (receiver is always USB)
   // tmp = UTC @ signal[0]

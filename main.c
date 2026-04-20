@@ -481,11 +481,12 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 
   int sample_rate = 0; // These get overwritten by load_wav
   int num_samples = 0;
+  int num_channels = 0;
   float *signal = NULL; // now allocated by load_wav, must free if we ever loop
 
   // load_wav now allocates signal, we must free (unless we exit right away, as we currently do)
   assert(path != NULL);
-  int const rc = load_wav(&signal, &num_samples, &sample_rate, path, fd);
+  int const rc = load_wav(&signal, &num_samples, &num_channels, &sample_rate, path, fd);
   flock(fd,LOCK_UN);
   close(fd); // remove the lock file later, after possible file removal
   if(Verbose)
