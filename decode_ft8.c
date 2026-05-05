@@ -16,8 +16,12 @@
 
 #include "common/wave.h"
 #include "common/debug.h"
+#ifdef USE_KISS
 #include "fft/kiss_fftr.h"
 #include "fft/kiss_fft.h"
+#else
+#include <fftw3.h>
+#endif
 
 #define LOG_LEVEL LOG_FATAL
 
@@ -29,8 +33,32 @@ const int kLDPC_iterations = 20;
 // Making this bigger seems to only cost memory, which I now allocate from the heap, so what the hell
 const int kMax_decoded_messages = 1000;
 
-const int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
-const int kTime_osr = 2; // Time oversampling rate (symbol subdivision)
+int kFreq_osr = 2; // Frequency oversampling rate (bin subdivision)
+int kTime_osr = 16; // Time oversampling rate (symbol subdivision)
+
+#ifndef USE_KISS
+static uint8_t log_lut[65536];
+static float db_lut[65536];
+static bool log_lut_initialized = false;
+
+static void log_lut_init(void) {
+  if (log_lut_initialized)
+    return;
+  for (int i = 0; i < 65536; ++i) {
+    union {
+      uint32_t u;
+      float f;
+    } v;
+    v.u = (uint32_t)i << 15;
+    float db = 10.0f * log10f(1E-12f + v.f);
+    int scaled = (int)(2 * db + 240);
+    log_lut[i] = (scaled < 0) ? 0 : ((scaled > 255) ? 255 : scaled);
+    db_lut[i] = db;
+  }
+  log_lut_initialized = true;
+}
+#endif
+
 static float hann_i(int i, int N)
 {
     float x = sinf((float)M_PI * i / N);
@@ -102,9 +130,16 @@ typedef struct
     waterfall_t wf;      ///< Waterfall object
     float max_mag;       ///< Maximum detected magnitude (debug stats)
 
+#ifdef USE_KISS
     // KISS FFT housekeeping variables
     void* fft_work;        ///< Work area required by Kiss FFT
     kiss_fftr_cfg fft_cfg; ///< Kiss FFT housekeeping object
+#else
+    // FFTW3 housekeeping variables
+    float *fft_in;          ///< Input buffer for FFTW
+    fftwf_complex *fft_out; ///< Output buffer for FFTW
+    fftwf_plan fft_plan;    ///< FFTW plan
+#endif
 } monitor_t;
 
 void monitor_init(monitor_t* me, const monitor_config_t* cfg)
@@ -129,16 +164,31 @@ void monitor_init(monitor_t* me, const monitor_config_t* cfg)
     }
     me->last_frame = (float *)malloc(me->nfft * sizeof(me->last_frame[0]));
 
+#ifdef USE_KISS
     size_t fft_work_size;
     kiss_fftr_alloc(me->nfft, 0, 0, &fft_work_size);
+#endif
 
     LOG(LOG_INFO, "Block size = %d\n", me->block_size);
     LOG(LOG_INFO, "Subblock size = %d\n", me->subblock_size);
     LOG(LOG_INFO, "N_FFT = %d\n", me->nfft);
+#ifdef USE_KISS
     LOG(LOG_DEBUG, "FFT work area = %zu\n", fft_work_size);
-
+ 
     me->fft_work = malloc(fft_work_size);
     me->fft_cfg = kiss_fftr_alloc(me->nfft, 0, me->fft_work, &fft_work_size);
+#else
+    me->fft_in = (float *)fftwf_malloc(sizeof(float) * me->nfft);
+    me->fft_out =
+        (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * (me->nfft / 2 + 1));
+  
+    fftwf_import_wisdom_from_filename(".ft8_fftw_wisdom");
+    me->fft_plan =
+        fftwf_plan_dft_r2c_1d(me->nfft, me->fft_in, me->fft_out, FFTW_MEASURE);
+    fftwf_export_wisdom_to_filename(".ft8_fftw_wisdom");
+
+    log_lut_init();
+#endif
 
     const int max_blocks = (int)(slot_time / symbol_period);
     const int num_bins = (int)(cfg->sample_rate * symbol_period / 2);
@@ -152,7 +202,13 @@ void monitor_init(monitor_t* me, const monitor_config_t* cfg)
 void monitor_free(monitor_t* me)
 {
     waterfall_free(&me->wf);
+#ifdef USE_KISS
     free(me->fft_work);
+#else
+    fftwf_destroy_plan(me->fft_plan);
+    fftwf_free(me->fft_in);
+    fftwf_free(me->fft_out);
+#endif
     free(me->last_frame);
     free(me->window);
 }
@@ -170,9 +226,10 @@ void monitor_process(monitor_t* me, const float* frame)
     // Loop over block subdivisions
     for (int time_sub = 0; time_sub < me->wf.time_osr; ++time_sub)
     {
+#ifdef USE_KISS
         kiss_fft_scalar timedata[me->nfft];
         kiss_fft_cpx freqdata[me->nfft / 2 + 1];
-
+#endif
         // Shift the new data into analysis frame
         for (int pos = 0; pos < me->nfft - me->subblock_size; ++pos)
         {
@@ -185,12 +242,19 @@ void monitor_process(monitor_t* me, const float* frame)
         }
 
         // Compute windowed analysis frame
-        for (int pos = 0; pos < me->nfft; ++pos)
-        {
+        for (int pos = 0; pos < me->nfft; ++pos) {
+#ifdef USE_KISS
             timedata[pos] = me->fft_norm * me->window[pos] * me->last_frame[pos];
+#else
+            me->fft_in[pos] = me->fft_norm * me->window[pos] * me->last_frame[pos];
+#endif
         }
 
-        kiss_fftr(me->fft_cfg, timedata, freqdata);
+#ifdef USE_KISS
+	kiss_fftr(me->fft_cfg, timedata, freqdata);
+#else
+	fftwf_execute(me->fft_plan);
+#endif
 
         // Loop over two possible frequency bin offsets (for averaging)
         for (int freq_sub = 0; freq_sub < me->wf.freq_osr; ++freq_sub)
@@ -198,6 +262,7 @@ void monitor_process(monitor_t* me, const float* frame)
             for (int bin = 0; bin < me->wf.num_bins; ++bin)
             {
                 int src_bin = (bin * me->wf.freq_osr) + freq_sub;
+#ifdef USE_KISS
                 float mag2 = (freqdata[src_bin].i * freqdata[src_bin].i) + (freqdata[src_bin].r * freqdata[src_bin].r);
                 float db = 10.0f * log10f(1E-12f + mag2);
                 // Scale decibels to unsigned 8-bit range and clamp the value
@@ -205,8 +270,20 @@ void monitor_process(monitor_t* me, const float* frame)
                 int scaled = (int)(2 * db + 240);
 
                 me->wf.mag[offset] = (scaled < 0) ? 0 : ((scaled > 255) ? 255 : scaled);
-                ++offset;
-
+#else
+                union {
+                  float f;
+                  uint32_t u;
+                } v;
+                v.f = (me->fft_out[src_bin][1] * me->fft_out[src_bin][1]) +
+                      (me->fft_out[src_bin][0] * me->fft_out[src_bin][0]);
+        
+                uint32_t idx = (v.u >> 15) & 0xffff;
+                me->wf.mag[offset] = log_lut[idx];
+ 
+                float db = db_lut[idx];
+#endif
+	        ++offset;
                 if (db > me->max_mag)
                     me->max_mag = db;
             }
@@ -238,6 +315,19 @@ int mcompare(void const *a, void const *b){
   else if(ma->freq_hz < mb->freq_hz)
     return -1;
   return 0;
+}
+
+static char *hexify(char *buff, const uint8_t *bits, size_t len) {
+  char *obuff = buff;
+  while (len > 0) {
+    *buff++ = "0123456789abcdef"[bits[0] >> 4];
+    *buff++ = "0123456789abcdef"[bits[0] & 0x0f];
+    bits++;
+    len--;
+  }
+  *buff++ = '\0';
+
+  return obuff;
 }
 
 // Process a buffer already loaded from a file
@@ -272,6 +362,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   int const candidate_size = (mon_cfg.f_max * kMax_candidates) / 3000; // Scale by bandwidth relative to the original 3 kHz
   candidate_t candidate_list[candidate_size];
   int num_candidates = ft8_find_sync(&mon.wf, candidate_size, candidate_list, kMin_score);
+  LOG(LOG_DEBUG, "Candidates = %d (of %d)\n", num_candidates, candidate_size);
 
   // Hash table for decoded messages (to check for duplicates)
   int num_decoded = 0;
@@ -352,25 +443,28 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   qsort(decoded_hashtable, kMax_decoded_messages, sizeof *decoded_hashtable, mcompare);
   // Empty entries sorted to top, so first num_decoded elements of decoded_hashtable are valid
   double tbase = tmp->tm_sec; // Full seconds and fraction in minute, should be just above (not below) period multiple
-  tbase = is_ft8 ? fmod(tbase,15.0) : fmod(tbase,7.5); // seconds after start of cycle (0/15/30/45 or 0/7.5/15/etc)
+  tbase = is_ft8 ? fmod(tbase,15.0) : fmod(tbase+1,7.5)-1; // seconds after start of cycle (0/15/30/45 or 0/7.5/15/etc)
   tbase += sec; // sec could be negative, so add it only now
 
   for(int i=0; i < num_decoded; i++){
     message_t const *mp = decoded_hashtable[i];
+    char hexbuffer[sizeof(mp->bits) * 2 + 1];
     if(mp == NULL)
       continue; // Shouldn't happen
 
-    fprintf(stdout,"%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2lf %'.1lf ~ %s\n",
-	    tmp->tm_year + 1900,
-	    tmp->tm_mon + 1,
-	    tmp->tm_mday,
+    fprintf(stdout,
+            "%4d/%02d/%02d %02d:%02d:%02d %3d %+4.2lf %'.1lf ~ %s  #%s\n",
+            tmp->tm_year + 1900, 
+	    tmp->tm_mon + 1, 
+	    tmp->tm_mday, 
 	    tmp->tm_hour,
-	    tmp->tm_min,
-	    tmp->tm_sec,
-	    mp->score,
+            tmp->tm_min, 
+	    tmp->tm_sec, 
+	    mp->score, 
 	    tbase + mp->time_sec,
-	    1.0e6 * base_freq + mp->freq_hz,
-	    mp->text);
+            1.0e6 * base_freq + mp->freq_hz, 
+	    mp->text,
+            hexify(hexbuffer, mp->bits, sizeof(mp->bits)));
   }
   free(decoded);
   free(decoded_hashtable);
