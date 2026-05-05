@@ -1,0 +1,12 @@
+Package: ka9q-ft8
+Version: 1.0-1
+Architecture: amd64
+Maintainer: Phil Karn <karn@ka9q.net>
+Installed-Size: 145
+Depends: libbsd0 (>= 0.3.0), libc6 (>= 2.38)
+Section: unknown
+Priority: optional
+Homepage: <insert the upstream URL, if relevant>
+Description: ft8/4 decoder for ka9q-radio
+ This is a modified version of ft8_lib that works with ka9q-radio. It contains a spooler that uses
+ pcmrecord from ka9q-radio-tools to record 15 or 7.5 sec files that are decoded by this program.

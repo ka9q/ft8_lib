@@ -1,0 +1,21 @@
+Source: ka9q-ft8
+Section: unknown
+Priority: optional
+Maintainer: Phil Karn <karn@ka9q.net>
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 13),
+Standards-Version: 4.7.2
+Homepage: <insert the upstream URL, if relevant>
+#Vcs-Browser: https://salsa.debian.org/debian/ka9q-ft8
+Vcs-Git: git@github.com:ka9q/ft8_lib.git
+
+Package: ka9q-ft8
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: ft8/4 decoder for ka9q-radio
+ This is a modified version of ft8_lib that works with ka9q-radio. It contains a spooler that uses
+ pcmrecord from ka9q-radio-tools to record 15 or 7.5 sec files that are decoded by this program.
+ 

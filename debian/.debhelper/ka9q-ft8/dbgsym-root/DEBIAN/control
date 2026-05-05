@@ -1,0 +1,12 @@
+Package: ka9q-ft8-dbgsym
+Source: ka9q-ft8
+Version: 1.0-1
+Auto-Built-Package: debug-symbols
+Architecture: amd64
+Maintainer: Phil Karn <karn@ka9q.net>
+Installed-Size: 227
+Depends: ka9q-ft8 (= 1.0-1)
+Section: debug
+Priority: optional
+Description: debug symbols for ka9q-ft8
+Build-Ids: 39bbb73f27a31386f4b1d43ea9e16f3dbffbbce6 c8f3658d6d4f638f6908179b0bc026742a5c8c65 de165bbc16f0e1e885b79b2d03d345d3958759cb
