@@ -1,8 +1,8 @@
 Package: ka9q-ft8
 Version: 1.0-1
-Architecture: amd64
+Architecture: arm64
 Maintainer: Phil Karn <karn@ka9q.net>
-Installed-Size: 145
+Installed-Size: 213
 Depends: libbsd0 (>= 0.3.0), libc6 (>= 2.38)
 Section: unknown
 Priority: optional

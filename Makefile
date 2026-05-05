@@ -11,6 +11,10 @@ pkgdatadir    ?= $(datadir)/ka9q-radio
 pkglibdir     ?= $(libdir)/ka9q-radio
 statedir      ?= $(localstatedir)/lib/ka9q-radio
 
+ifdef DESTDIR
+prefix = /usr
+endif
+
 export prefix exec_prefix bindir sbindir libdir datadir sysconfdir
 export localstatedir pkgdatadir pkglibdir statedir mandir
 export DEB_BUILD_ARCH
