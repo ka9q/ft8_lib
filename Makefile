@@ -5,7 +5,9 @@
 CFLAGS = -O3 -ggdb3 -march=native -flto -ffast-math 
 CPPFLAGS = -std=c11 -I. $(shell pkg-config --cflags fftw3f)
 LDFLAGS = -latomic -lbsd -lm -flto $(shell pkg-config --libs fftw3f)
+LDFLAGS = -lm -flto $(shell pkg-config --libs fftw3f)
 LDFLAGS_KISS = -latomic -lbsd -lm -flto 
+LDFLAGS_KISS = -lm -flto 
 
 TARGETS = gen_ft8 decode_ft8 test decode_ft8_kiss
 

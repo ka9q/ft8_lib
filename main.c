@@ -304,7 +304,6 @@ int main(int argc, char *argv[]){
 #endif
   exit(0);
 }
-#ifdef __linux__
 int scompare(void const *a, void const *b){
   char const *ap = *(char const **)a;
   char const *bp = *(char const **)b;
@@ -315,6 +314,7 @@ int scompare(void const *a, void const *b){
     return +1;
   return strcmp(ap,bp);
 }
+#ifdef __linux__
 
 // Add a directory to the watch list
 int Watches = 0;
