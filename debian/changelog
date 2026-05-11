@@ -1,5 +1,6 @@
-ka9q-ft8 (1.0-1) UNRELEASED; urgency=medium
+ka9q-ft8 (1.0-2) ka9q; urgency=medium
 
-  * Initial release. (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+  * Initial release.
+  * 
 
- -- Phil Karn <karn@bart.ka9q.net>  Tue, 05 May 2026 02:46:00 -0700
+ -- Phil Karn <karn@ka9q.net>  Sun, 10 May 2026 23:13:30 -0700
