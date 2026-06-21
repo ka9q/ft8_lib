@@ -31,6 +31,7 @@
 #ifdef __linux__
 #include <sys/inotify.h>
 #endif
+#include "misc.h"
 
 #include "common/wave.h"
 #include "common/debug.h"
@@ -217,7 +218,7 @@ int main(int argc, char *argv[]){
 	    fprintf(stderr,"Dropping watch %d on %s\n",event->wd,dirname);
 	  // Remove from hash table BUT leave wd unchanged as a "tombstone" for the deleted entry
 	  // so searches for other nearby values won't erroneously fail
-	  free(Wd_hashtab[hp].path);
+	  FREE(Wd_hashtab[hp].path);
 	  Wd_hashtab[hp].path = NULL; // Leave .wd in case the entry is reused
 	  Watches--;
 	  if(Watches == 0){
@@ -231,13 +232,13 @@ int main(int argc, char *argv[]){
 	int r = asprintf(&fullname,"%s/%s",dirname, event->name); // mallocs memory for fullname
 	if(r <= 0){
 	  fprintf(stderr,"asprintf %s/%s failed\n",dirname, event->name);
-	  free(fullname);
+	  FREE(fullname);
 	  continue;
 	}
 	// Use lstat so we'll ignore symbolic links
 	struct stat statbuf = {0};
 	if(lstat(fullname,&statbuf) != 0){
-	  free(fullname);
+	  FREE(fullname);
 	  continue;
 	}
 	switch(statbuf.st_mode & S_IFMT){
@@ -262,7 +263,7 @@ int main(int argc, char *argv[]){
 	default: // Ignore symbolic links and everything else
 	  break;
 	}
-	free(fullname);
+	FREE(fullname);
       }
       // Sort and process list of files in each event
       // Doesn't really work well because the events are often split across several reads
@@ -270,7 +271,7 @@ int main(int argc, char *argv[]){
       qsort(file_list,filecount,sizeof file_list[0],scompare);
       for(int i=0; i < filecount; i++){
 	process_file(file_list[i], is_ft8, base_freq);
-	free(file_list[i]);
+	FREE(file_list[i]);
       }
     }
     if(len < 0 && errno != EAGAIN){
@@ -293,7 +294,6 @@ int main(int argc, char *argv[]){
 #endif
   exit(0);
 }
-#ifdef __linux__
 int scompare(void const *a, void const *b){
   char const *ap = *(char const **)a;
   char const *bp = *(char const **)b;
@@ -304,6 +304,7 @@ int scompare(void const *a, void const *b){
     return +1;
   return strcmp(ap,bp);
 }
+#ifdef __linux__
 
 // Add a directory to the watch list
 int Watches = 0;
@@ -335,7 +336,7 @@ int add_watches_recursive(int const fd, const char *path) {
     fprintf(stderr,"add_watches_recursive(%s) failed: Hash table full\n",path);
     return -1;
   }
-  free(Wd_hashtab[hp].path); // Just in case it's already present, but how can this happen?
+  FREE(Wd_hashtab[hp].path); // Just in case it's already present, but how can this happen?
   Wd_hashtab[hp].path = strdup(path);
   Wd_hashtab[hp].wd = wd;
 
@@ -348,11 +349,12 @@ int add_watches_recursive(int const fd, const char *path) {
       char *subpath = NULL;
       int r = asprintf(&subpath, "%s/%s", path, ent->d_name);
       if(r <= 0){
-	free(subpath);
+	FREE(subpath);
 	fprintf(stderr,"add_watches_recursive(%s) failed when adding %s, no memory\n",path,ent->d_name);
 	abort(); // out of memory should be very rare!
       }
       add_watches_recursive(fd, subpath);
+      FREE(subpath);
     }
   }
   closedir(dir);
@@ -523,6 +525,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	fprintf(stderr,"can't delete %s: %s\n",lockfile,strerror(errno));
       }
     }
+    FREE(signal);
     return -1;
   }
   if(base_freq == 0){
@@ -589,7 +592,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
       int year,mon,day,hr,minute,sec;
       char junk;
       int r = sscanf(bn,"%04d%02d%02d%c%02d%02d%02d",&year,&mon,&day,&junk,&hr,&minute,&sec);
-      free(npath);
+      FREE(npath);
       if(r == 7){
 	// Convert to Unix-style struct tm (using its conventions)
 	tmp.tm_year = year - 1900;
@@ -644,7 +647,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 
   // Do the actual decoding.
   process_buffer(signal, sample_rate, num_samples, is_ft8, base_freq, &tmp,fsec);
-  free(signal); // allocated by load_wav
+  FREE(signal); // allocated by load_wav
   signal = NULL;
   fflush(stdout);
 
@@ -742,7 +745,7 @@ void process_directory(char const *path, bool is_ft8, double base_freq){
   qsort(file_list,filecount,sizeof file_list[0],scompare);
   for(int i=0; i < filecount; i++){
     process_file(file_list[i], is_ft8, base_freq);
-    free(file_list[i]);
+    FREE(file_list[i]);
   }
   // Return to our originally scheduled program
 done:;
