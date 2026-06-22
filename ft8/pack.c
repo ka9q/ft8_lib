@@ -1,10 +1,10 @@
-#include "pack.h"
-#include "text.h"
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+
+#include "pack.h"
+#include "text.h"
 
 #define NTOKENS  ((uint32_t)2063592L)
 #define MAX22    ((uint32_t)4194304L)
@@ -29,13 +29,14 @@ int32_t pack28(const char* callsign)
     if (starts_with(callsign, "CQ "))
         return 2;
 
+#if 0
     if (starts_with(callsign, "CQ_"))
     {
         int nnum = 0, nlet = 0;
 
         // TODO:
     }
-
+#endif
     // TODO: Check for <...> callsign
 
     char c6[6] = { ' ', ' ', ' ', ' ', ' ', ' ' };
@@ -100,6 +101,7 @@ int32_t pack28(const char* callsign)
 // Return base call "bc" and a logical "cok" indicator.
 bool chkcall(const char* call, char* bc)
 {
+  (void)bc; // quiet warning for now
     int length = strlen(call); // n1=len_trim(w)
     if (length > 11)
         return false;

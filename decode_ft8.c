@@ -37,6 +37,7 @@ static float hann_i(int i, int N)
     return x * x;
 }
 
+#if 0
 static float hamming_i(int i, int N)
 {
     const float a0 = (float)25 / 46;
@@ -58,6 +59,7 @@ static float blackman_i(int i, int N)
 
     return a0 - a1 * x1 + a2 * x2;
 }
+#endif
 
 void waterfall_init(waterfall_t* me, int max_blocks, int num_bins, int time_osr, int freq_osr)
 {
@@ -242,7 +244,7 @@ int mcompare(void const *a, void const *b){
 
 // Process a buffer already loaded from a file
 // Pass precise time of signal[0] (including fractional second) so we can reference to it
-int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double sec){
+int process_buffer(float const *signal,unsigned int sample_rate, unsigned int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double sec){
   assert(signal != NULL && tmp != NULL);
 
   LOG(LOG_INFO, "Sample rate %d Hz, %d samples, %.3f seconds\n", sample_rate, num_samples, (double)num_samples / sample_rate);
@@ -259,7 +261,7 @@ int process_buffer(float const *signal,int sample_rate, int num_samples, bool is
   };
   monitor_init(&mon, &mon_cfg);
   LOG(LOG_DEBUG, "Waterfall allocated %d symbols\n", mon.wf.max_blocks);
-  for (int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
+  for (unsigned int frame_pos = 0; frame_pos + mon.block_size <= num_samples; frame_pos += mon.block_size)
     {
       // Process the waveform data frame by frame - you could have a live loop here with data from an audio device
       // (cool, now that we can get sample timings - KA9Q)

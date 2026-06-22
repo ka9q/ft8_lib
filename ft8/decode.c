@@ -1,11 +1,13 @@
+#define _GNU_SOURCE 1
+
+#include <stdbool.h>
+#include <math.h>
+
 #include "decode.h"
 #include "constants.h"
 #include "crc.h"
 #include "ldpc.h"
 #include "unpack.h"
-
-#include <stdbool.h>
-#include <math.h>
 
 /// Compute log likelihood log(p(1) / p(0)) of 174 message bits for later use in soft-decision LDPC decoding
 /// @param[in] wf Waterfall data collected during message slot
@@ -30,7 +32,9 @@ static void heapify_up(candidate_t heap[], int heap_size);
 static void ftx_normalize_logl(float* log174);
 static void ft4_extract_symbol(const uint8_t* wf, float* logl);
 static void ft8_extract_symbol(const uint8_t* wf, float* logl);
+#if 0
 static void ft8_decode_multi_symbols(const uint8_t* wf, int num_bins, int n_syms, int bit_idx, float* log174);
+#endif
 
 static int get_index(const waterfall_t* wf, const candidate_t* candidate)
 {
@@ -465,6 +469,7 @@ static void ft8_extract_symbol(const uint8_t* wf, float* logl)
     logl[2] = max4(s2[1], s2[3], s2[5], s2[7]) - max4(s2[0], s2[2], s2[4], s2[6]);
 }
 
+#if 0
 // Compute unnormalized log likelihood log(p(1) / p(0)) of bits corresponding to several FSK symbols at once
 static void ft8_decode_multi_symbols(const uint8_t* wf, int num_bins, int n_syms, int bit_idx, float* log174)
 {
@@ -521,6 +526,7 @@ static void ft8_decode_multi_symbols(const uint8_t* wf, int num_bins, int n_syms
         log174[bit_idx + i] = max_one - max_zero;
     }
 }
+#endif
 
 // Packs a string of bits each represented as a zero/non-zero byte in plain[],
 // as a string of packed bits starting from the MSB of the first byte of packed[]

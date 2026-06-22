@@ -29,10 +29,24 @@ PATH_FLAGS += -DPKGDATADIR=\"$(pkgdatadir)\"
 PATH_FLAGS += -DPKGLIBDIR=\"$(pkglibdir)\"
 
 UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  INCLUDES += -I/opt/local/include
+  LDFLAGS  += -L/opt/local/lib -lm
+  LDLIBS +=
+else
+  LDLIBS += -latomic -lbsd -lm
+endif
 
-CFLAGS = -O3 -ggdb3
-CPPFLAGS = -std=c11 -I.
-LDFLAGS = -latomic -lbsd -lm
+ifeq ($(BUILD),debug)
+     DOPTS = -g
+else
+     DOPTS = -DNDEBUG=1 -O3
+endif
+
+
+
+COPTS = -std=gnu11 -Wall -funsafe-math-optimizations -fno-math-errno -fcx-limited-range -freciprocal-math -fno-trapping-math -Wextra -Wno-sign-conversion -Wno-int-conversion -MMD -MP
+CFLAGS += $(DOPTS) $(ARCHOPTS) $(COPTS) $(INCLUDES)
 
 TARGETS = gen_ft8 decode_ft8 test_ft8
 

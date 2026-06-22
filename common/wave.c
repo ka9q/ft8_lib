@@ -77,7 +77,7 @@ void save_wav(const float* signal, int num_samples, int sample_rate, const char*
 // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
 // Rewritten 4 May 2025 KA9Q to be more tolerant of variant headers
 // Expects to be called with the file already open for reading on fd. path used only for error messages
-int load_wav(float **signal, int* num_frames, int *num_channels, int* sample_rate, const char* path, FILE *fp){
+int load_wav(float **signal, unsigned int* num_frames, unsigned int *num_channels, unsigned int* sample_rate, const char* path, FILE *fp){
   if(signal == NULL || num_frames == NULL || num_channels == NULL || sample_rate == NULL || path == NULL || fp == NULL)
     return -1;
 
@@ -99,7 +99,6 @@ int load_wav(float **signal, int* num_frames, int *num_channels, int* sample_rat
     fprintf(stderr,"%s: not RIFF\n",path);
     goto quit;
   }
-
   if(strncmp(format,"WAVE",4) !=0 ){
     fprintf(stderr,"%s: not WAVE\n",path);
     goto quit;
@@ -169,7 +168,7 @@ int load_wav(float **signal, int* num_frames, int *num_channels, int* sample_rat
 	    fprintf(stderr,"%s: bits per sample %d for PCM; must be 16\n",path,bitsPerSample);
 	    goto quit;
 	  }
-	  int count;
+	  unsigned int count;
 	  for(count = 0; count < *num_frames * numChannels; count++){ // numChannels must be 1
 	    int16_t s;
 	    if(fread(&s,sizeof s, 1, fp) != 1)
@@ -194,7 +193,7 @@ int load_wav(float **signal, int* num_frames, int *num_channels, int* sample_rat
 	    fprintf(stderr,"%s: unexpected blockAlign %u for float WAV file\n",path,blockAlign);
 	    goto quit;
 	  }
-	  int const count = fread(*signal,blockAlign,*num_frames, fp); // Read floating point directly
+	  size_t count = fread(*signal,blockAlign,*num_frames, fp); // Read floating point directly
 	  if(count != *num_frames){
 	    // Trim buffer and return the actual count
 	    *signal = reallocf(*signal,blockAlign * count);

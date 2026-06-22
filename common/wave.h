@@ -10,17 +10,17 @@ extern "C"
 {
 #endif
 
-  // Save signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
-  void save_wav(const float* signal, int num_samples, int sample_rate, const char* path);
+// Save signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
+void save_wav(const float* signal, int num_samples, int sample_rate, const char* path);
 
-  // Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
-  // Now mallocs signal array, places in *signal, caller must free
-  int load_wav(float** signal, int* num_samples, int *num_channels, int* sample_rate, const char* path,FILE *fp);
+// Load signal in floating point format (-1 .. +1) as a WAVE file using 16-bit signed integers.
+// Now mallocs signal array, places in *signal, caller must free
+int load_wav(float** signal, unsigned int* num_samples, unsigned int *num_channels, unsigned int* sample_rate, const char* path,FILE *fp);
 
-  // base_freq = radio frequency in Hz corresponding to zero frequency here (receiver is always USB)
-  // tmp = UTC @ signal[0]
-  // fsec = fractional second in UTC @ signal[0]
-  int process_buffer(float const *signal,int sample_rate, int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double fsec);
+// base_freq = radio frequency in Hz corresponding to zero frequency here (receiver is always USB)
+// tmp = UTC @ signal[0]
+// fsec = fractional second in UTC @ signal[0]
+int process_buffer(float const *signal,unsigned int sample_rate, unsigned int num_samples, bool is_ft8, float base_freq, struct tm const *tmp, double fsec);
 
 #ifdef __cplusplus
 }

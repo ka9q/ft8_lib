@@ -1,3 +1,4 @@
+#define _GNU_SOURCE 1
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -56,7 +57,7 @@ bool test1() {
 
     int rc = packmsg(msg, a72);
     if (rc < 0) return false;
-  
+
     LOG(LOG_INFO, "8-bit packed: ");
     for (int i = 0; i < 9; ++i) {
         LOG(LOG_INFO, "%02x ", a72[i]);
@@ -117,8 +118,13 @@ void test_tones(float* log174)
 
 void test4()
 {
+#if 0
     const int nfft = 128;
     const float fft_norm = 2.0 / nfft;
+#else // quiet gcc warnings
+    int nfft = 128;
+    float fft_norm = 2.0 / nfft;
+#endif
 
     size_t fft_work_size;
     kiss_fftr_alloc(nfft, 0, 0, &fft_work_size);

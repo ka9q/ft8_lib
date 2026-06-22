@@ -1,6 +1,6 @@
 #ifdef __linux__
 #ifndef _GNU_SOURCE
-#define _GNU_SOURCE
+#define _GNU_SOURCE 1
 #endif
 #endif
 
@@ -275,6 +275,7 @@ int unpack_nonstandard(const uint8_t* a77, char* call_to, char* call_de, char* e
     uint64_t n58;
     n12 = (a77[0] << 4); //11 ~4  : 8
     n12 |= (a77[1] >> 4); //3~0 : 12
+    (void)n12; // shut up warning for now - KA9Q
 
     n58 = ((uint64_t)(a77[1] & 0x0F) << 54); //57 ~ 54 : 4
     n58 |= ((uint64_t)a77[2] << 46); //53 ~ 46 : 12
