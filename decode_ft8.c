@@ -278,9 +278,9 @@ int process_buffer(float const *signal,unsigned int sample_rate, unsigned int nu
   // Hash table for decoded messages (to check for duplicates)
   int num_decoded = 0;
   // Pointer to kMax_decoded_messages-element array of message_t structures
-  message_t *decoded = calloc(sizeof(message_t), kMax_decoded_messages);
+  message_t *decoded = calloc(kMax_decoded_messages, sizeof (message_t));
   // Pointer to kMax_decoded_messsages-element array of pointers to message_t structures
-  message_t **decoded_hashtable = calloc(sizeof(message_t *), kMax_decoded_messages);
+  message_t **decoded_hashtable = calloc(kMax_decoded_messages, sizeof(message_t *));
 
   // Go over candidates and attempt to decode messages
   for (int idx = 0; idx < num_candidates; ++idx)
