@@ -31,8 +31,8 @@ PATH_FLAGS += -DPKGLIBDIR=\"$(pkglibdir)\"
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
   INCLUDES += -I/opt/local/include
-  LDFLAGS  += -L/opt/local/lib -lm
-  LDLIBS +=
+  LDFLAGS  += -L/opt/local/lib
+  LDLIBS += -lm
 else
   LDLIBS += -latomic -lbsd -lm
 endif
@@ -58,13 +58,13 @@ run_tests: test_ft8
 	@./test_ft8
 
 gen_ft8: gen_ft8.o ft8/constants.o ft8/text.o ft8/pack.o ft8/encode.o ft8/crc.o common/wave.o
-	$(CXX) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 test_ft8:  test_ft8.o ft8/pack.o ft8/encode.o ft8/crc.o ft8/text.o ft8/constants.o fft/kiss_fftr.o fft/kiss_fft.o
-	$(CXX) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 decode_ft8: main.o decode_ft8.o fft/kiss_fftr.o fft/kiss_fft.o ft8/decode.o ft8/encode.o ft8/crc.o ft8/ldpc.o ft8/unpack.o ft8/text.o ft8/constants.o common/wave.o
-	$(CXX) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 libft8.a: ft8/constants.o ft8/encode.o ft8/pack.o ft8/text.o common/wave.o
 	ar rc libft8.a $^
