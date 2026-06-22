@@ -336,7 +336,7 @@ int add_watches_recursive(int const fd, const char *path) {
   if(i == HSIZE){
     fprintf(stderr,"add_watches_recursive(%s) failed: Hash table full\n",path);
     closedir(dir);
-    close(wd);
+    inotify_rm_watch(fd,wd);
     return -1;
   }
   FREE(Wd_hashtab[hp].path); // Just in case it's already present, but how can this happen?
