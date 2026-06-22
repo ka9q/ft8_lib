@@ -318,6 +318,7 @@ int add_watches_recursive(int const fd, const char *path) {
   int const wd = inotify_add_watch(fd, path, IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE_SELF | IN_CREATE | IN_ISDIR);
   if(wd == -1){
     fprintf(stderr,"inotify_add_watch(%s) failed: %s\n",path,strerror(errno));
+    closedir(dir);
     return 0;
   }
   if(Verbose)
@@ -334,6 +335,8 @@ int add_watches_recursive(int const fd, const char *path) {
   }
   if(i == HSIZE){
     fprintf(stderr,"add_watches_recursive(%s) failed: Hash table full\n",path);
+    closedir(dir);
+    close(wd);
     return -1;
   }
   FREE(Wd_hashtab[hp].path); // Just in case it's already present, but how can this happen?
@@ -469,14 +472,14 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
     }
   }
   // Try to open it
-  int const fd = open(path,O_RDONLY);
-  if(fd == -1){
+  FILE *fp = fopen(path,"r");
+  if(fp == NULL){
     unlink(lockfile);
     return 1; // Somebody else aleady got to it (unlikely with locking?)
   }
-  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
+  if(flock(fileno(fp), LOCK_EX|LOCK_NB) == -1){
     // Could happen if file is still being written
-    close(fd);
+    fclose(fp);
     unlink(lockfile);
     return 1;
   }
@@ -488,9 +491,9 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 
   // load_wav now allocates signal, we must free (unless we exit right away, as we currently do)
   assert(path != NULL);
-  int const rc = load_wav(&signal, &num_samples, &num_channels, &sample_rate, path, fd);
-  flock(fd,LOCK_UN);
-  close(fd); // remove the lock file later, after possible file removal
+  int const rc = load_wav(&signal, &num_samples, &num_channels, &sample_rate, path, fp);
+  flock(fileno(fp),LOCK_UN);
+  fclose(fp); // remove the lock file later, after possible file removal
   if(Verbose)
     fprintf(stderr,"decode %s: %d samples, sample rate %d Hz\n", path, num_samples, sample_rate);
 
