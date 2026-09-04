@@ -1,3 +1,9 @@
+ka9q-ft8 (2026.09.04-1-resolute1) resolute; urgency=medium
+
+  * commit fa7216cc5ff841dd00d475438fda5c0351e0be7b
+
+ -- Phil Karn <karn@ka9q.net>  Fri, 04 Sep 2026 03:39:27 -0700
+
 ka9q-ft8 (2026.06.22-1-trixie1) trixie; urgency=medium
 
   * fix some memory leaks, clean up macos make
