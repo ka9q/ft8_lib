@@ -548,7 +548,7 @@ int process_file(char const * const path, bool is_ft8, double base_freq){
 	fprintf(stderr,"Extracted base frequency %lf MHz from attribute\n",base_freq);
     } else {
       // Extract from file name
-      char *cp,*cp1;
+      char const *cp,*cp1;
       // Should use basename in case directory element has _
       if((cp = strchr(path,'_')) != NULL && (cp1 = strrchr(path,'_')) != NULL){
 	base_freq = strtod(cp+1,NULL) / 1e6;
